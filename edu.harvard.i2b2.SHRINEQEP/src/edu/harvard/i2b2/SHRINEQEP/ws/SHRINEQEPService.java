@@ -36,7 +36,7 @@ public class SHRINEQEPService {
 	private static Log log = LogFactory.getLog(SHRINEQEPService.class);
 	protected final Logger logesapi = ESAPI.getLogger(getClass());
 	private static int tCount = 0;
-	private static SHRINEHubPollService poller = new HRINEHubPollService();
+	private static SHRINEHubPollService poller = new SHRINEHubPollService();
 
 	/**
 	 * This function is main webservice interface to get vocab data
