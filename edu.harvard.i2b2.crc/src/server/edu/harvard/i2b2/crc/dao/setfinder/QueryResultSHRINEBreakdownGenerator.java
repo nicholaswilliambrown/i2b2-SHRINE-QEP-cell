@@ -62,9 +62,27 @@ import edu.harvard.i2b2.crc.util.LogTimingUtil;
 
 import java.net.URL;
 import java.net.HttpURLConnection;
+import javax.net.ssl.HttpsURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.FileInputStream;
+import java.io.*;
+import java.util.stream.Collectors;
 
+import javax.sql.DataSource;
+import edu.harvard.i2b2.common.util.ServiceLocator;
+import java.sql.Connection;
+
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.X509ExtendedTrustManager;
+import javax.net.ssl.SSLContext;
+import java.security.cert.X509Certificate;
+import java.security.SecureRandom;
+import java.security.KeyStore;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.TrustManagerFactory;
 /**
  * Setfinder's result genertor class. This class calculates patient break down
  * for the result type.
@@ -128,6 +146,58 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 
 			LogTimingUtil subLogTimingUtil = new LogTimingUtil();
 			subLogTimingUtil.setStartTime();
+			
+			int resultInstanceIDPatientCountShrineXML = 0;
+		
+			PreparedStatement riipcsxstmt = sfConn.prepareStatement("select Result_Instance_ID from QT_QUERY_RESULT_INSTANCE a join QT_QUERY_RESULT_TYPE b on a.RESULT_TYPE_ID = b.RESULT_TYPE_ID and b.name = 'PATIENT_COUNT_SHRINE_XML' and QUERY_INSTANCE_ID = " + queryInstanceId);
+			riipcsxstmt.setQueryTimeout(transactionTimeout);
+
+			// NWB - Send the final query and get the results back/
+			//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
+
+			//
+			//subLogTimingUtil.setStartTime();
+			ResultSet riipcsxResultSet = riipcsxstmt.executeQuery();
+			/*if (csr.getSqlFinishedFlag()) {
+				timeoutFlag = true;
+				throw new CRCTimeOutException("The query was canceled.");
+			}*/
+			
+			while (riipcsxResultSet.next()) {
+				resultInstanceIDPatientCountShrineXML = riipcsxResultSet.getInt("Result_Instance_ID");
+			}
+			//riipcsxstmt.close();
+			
+			if (resultInstanceIDPatientCountShrineXML > 0)
+			{
+				return;
+			}
+			
+			PreparedStatement riipcsxstmt2 = sfConn.prepareStatement("insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, now(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'");
+			riipcsxstmt2.setQueryTimeout(transactionTimeout);
+			riipcsxstmt2.executeUpdate();
+			riipcsxstmt2.close();
+			
+			riipcsxResultSet = riipcsxstmt.executeQuery();
+			/*if (csr.getSqlFinishedFlag()) {
+				timeoutFlag = true;
+				throw new CRCTimeOutException("The query was canceled.");
+			}*/
+			
+			while (riipcsxResultSet.next()) {
+				resultInstanceIDPatientCountShrineXML = riipcsxResultSet.getInt("Result_Instance_ID");
+			}
+			riipcsxstmt.close();
+			
+			//PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values ?, '<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns10:i2b2_result_envelope xmlns:ns10=\"http://www.i2b2.org/xsd/hive/msg/result/1.1/\"><body><ns10:result name=\"PATIENT_COUNT_SHRINE_XML\" /><SHRINE /></body></ns10:i2b2_result_envelope>'");
+			PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values (?, '')");
+			riipcsxstmt3.setInt(1, resultInstanceIDPatientCountShrineXML);
+			riipcsxstmt3.setQueryTimeout(transactionTimeout);
+			riipcsxstmt3.executeUpdate();
+			riipcsxstmt3.close();
+			
+			System.out.println("Result Instance ID: " + resultInstanceIDPatientCountShrineXML);
+			
 
 			String itemCountSql = getItemKeyFromResultType(sfDAOFactory, resultTypeName);
 
@@ -144,62 +214,60 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 					transactionTimeout);
 			Thread csrThread = new Thread(csr);
 			csrThread.start();
-
-			//String sqlFinal = "";
-
-
-			// NWB - This code splits the SQL and runs the all but the last query ignoring query sets.
-/*			if (itemCountSql.contains("{{{DX}}}"))
-				itemCountSql = itemCountSql.replaceAll("\\{\\{\\{DX\\}\\}\\}", TEMP_DX_TABLE);
-			if (itemCountSql.contains("{{{DATABASE_NAME}}}"))
-				itemCountSql = itemCountSql.replaceAll("\\{\\{\\{DATABASE_NAME\\}\\}\\}", this.getDbSchemaName());
-
-
-			String[] sqls = itemCountSql.split("<\\*>");
-			int count = 0;
-			while (count < sqls.length - 1)
-			{
-
-				stmt = sfConn.prepareStatement(sqls[count]);
-				stmt.setQueryTimeout(transactionTimeout);
-				logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-				//
-				subLogTimingUtil.setStartTime();
-				ResultSet resultSet = stmt.executeQuery();
-				if (csr.getSqlFinishedFlag()) {
-					timeoutFlag = true;
-					throw new CRCTimeOutException("The query was canceled.");
-				}
-
-				count++;
-			}
-*/			
-			// NWB - This is my code for sending a post message
-			//sendRequest("http://localhost:59725/test", queryInstanceId);
-
-			postToSHRINECell();
-
-			// NWB - Send the final query and get the results back/
-			stmt = sfConn.prepareStatement("exec [dbo].[SHRINE_CREATE_QUERY] @QueryInstanceID=" + queryInstanceId);
+			
+			stmt = sfConn.prepareStatement("select a.query_master_id, request_xml  from QT_QUERY_INSTANCE a join QT_QUERY_MASTER b on a.query_master_id = b.query_master_id and query_instance_id = " + queryInstanceId);
 			stmt.setQueryTimeout(transactionTimeout);
-			//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-			//
+			
 			subLogTimingUtil.setStartTime();
 			ResultSet resultSet = stmt.executeQuery();
 			if (csr.getSqlFinishedFlag()) {
 				timeoutFlag = true;
 				throw new CRCTimeOutException("The query was canceled.");
 			}
-			int qep_query_id = 0;
+			int queryMasterId = -1;
+			String requestXML = "";
 			
 			while (resultSet.next()) {
-				String hub_url = resultSet.getString("hub_url");
-				String content = resultSet.getString("content");
-				qep_query_id = resultSet.getInt("qep_query_id");
+				queryMasterId = resultSet.getInt("query_master_id");
+				requestXML = resultSet.getString("request_xml");
+			}
+
+			csr.setSqlFinishedFlag();
+			csrThread.interrupt();
+			stmt.close();
+
+
+
+			httpMessageResponse response = get("https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/hub/node/masscpr-i2b2-qep");			
+
+			String dataSourceName = "SHRINEDemoDS";
+			DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+			Connection conn = dataSource.getConnection();
+			PreparedStatement shrinestmt = conn.prepareStatement("EXEC [dbo].[SHRINE_CREATE_QUERY] @QueryMasterID=?, @x=?");
+			shrinestmt.setInt(1, queryMasterId);
+			shrinestmt.setString(2, requestXML);
+			//int transactionTimeout = 500;
+			shrinestmt.setQueryTimeout(transactionTimeout);
+
+			// NWB - Send the final query and get the results back/
+			//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
+
+			//
+			subLogTimingUtil.setStartTime();
+			ResultSet shrineResultSet = shrinestmt.executeQuery();
+			/*if (csr.getSqlFinishedFlag()) {
+				timeoutFlag = true;
+				throw new CRCTimeOutException("The query was canceled.");
+			}*/
+			int qep_query_id = 0;
+			
+			while (shrineResultSet.next()) {
+				String hub_url = shrineResultSet.getString("hub_url");
+				String content = shrineResultSet.getString("content");
+				qep_query_id = shrineResultSet.getInt("qep_query_id");
 				sendRequest(hub_url, content);
 			}
+			shrinestmt.close();
 /*	
 			for(int i = 0; i < 3; i++){
 				DataType mdataType = new DataType();
@@ -211,7 +279,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			//Thread.sleep(10000);
 */			
 			//NWB - Start Processing results
-
+/*
 			for(int i = 0; i < 50; i++)
 			{
 				Thread.sleep(200);
@@ -244,10 +312,10 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 
 				if("FINISHED".equals(resultstatus) || "ERROR".equals(resultstatus)) break; 
 			}
+*/
 
-			csr.setSqlFinishedFlag();
-			csrThread.interrupt();
-			stmt.close();
+			//Start the SHRINE listener
+			postToSHRINECell();
 
 			edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory of = new edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory();
 			BodyType bodyType = new BodyType();
@@ -372,24 +440,94 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	public static void sendRequest(String apiurl, String payload){
 		try{
 			URL url = new URL(apiurl);
-			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
 			connection.setRequestMethod("PUT");
 			connection.setDoOutput(true);
 			connection.setRequestProperty("Content-Type","application/json");
 			connection.setRequestProperty("Accept", "application/json");
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 1");
+			
+			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			KeyStore ks = KeyStore.getInstance("PKCS12");
+			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
+			ksStream.close();
+
+			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+			kmf.init(ks, passphrase);
+
+			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
+			tmf.init(ks);
+
+			SSLContext sslContext = SSLContext.getInstance("TLS");
+			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+			
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 2");
+			
 			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
 			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
 			byte[] out = payload.getBytes(StandardCharsets.UTF_8);
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 3");
 			OutputStream stream = connection.getOutputStream();
 			stream.write(out);
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 4");
 			System.out.println(connection.getResponseCode() + " " + connection.getResponseMessage()); // THis is optional
+			connection.disconnect();
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 5");
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest Failed successfully");
+		}
+	}
+	
+	
+		public httpMessageResponse get(String apiurl){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			System.out.println(apiurl);
+			URL url = new URL(apiurl);
+			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+			connection.setRequestMethod("GET");
+			connection.setConnectTimeout(5000);
+			connection.setReadTimeout(5000);
+			connection.setRequestProperty("Accept", "application/json");
+			
+			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			KeyStore ks = KeyStore.getInstance("PKCS12");
+			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
+			ksStream.close();
+			
+			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+			kmf.init(ks, passphrase);
+
+			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
+			tmf.init(ks);
+
+			SSLContext sslContext = SSLContext.getInstance("TLS");
+			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+
+			InputStream inputStream = connection.getInputStream();
+			String text = new BufferedReader(
+			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+				.lines()
+				.collect(Collectors.joining("\n"));
+			//System.out.println(text);
+			response.update(connection.getResponseCode(), text);
+			//System.out.println(response.statusCode + " " + response.message); // THis is optional
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
-			System.out.println("Failed successfully");
+			System.out.println("QueryResultSHRINEBreakdownGenerator get Failed successfully");
 		}
+		return response;
 	}
-
+	
+	
 	public static void postToSHRINECell(){
 		try{
 			String apiurl = "http://localhost:9090/i2b2/services/SHRINEQEPService/helloWorld";
@@ -425,5 +563,23 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 		return itemKey;
 	}
 
+
+		private class httpMessageResponse
+	{
+		public httpMessageResponse()
+		{
+			statusCode  = -1;
+			message = "";
+		}
+		
+		public void update(int _statusCode, String _message)
+		{
+			statusCode = _statusCode;
+			message = _message;
+		}
+		
+		public int statusCode;
+		public String message;
+	}
 
 }

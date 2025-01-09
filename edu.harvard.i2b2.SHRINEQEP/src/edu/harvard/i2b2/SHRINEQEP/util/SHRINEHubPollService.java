@@ -26,6 +26,16 @@ import javax.sql.DataSource;
 import edu.harvard.i2b2.common.util.ServiceLocator;
 //import edu.harvard.i2b2.crc.util.LogTimingUtil;
 
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.X509ExtendedTrustManager;
+import javax.net.ssl.SSLContext;
+import java.security.cert.X509Certificate;
+import java.security.SecureRandom;
+import java.security.KeyStore;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.HttpsURLConnection;
 
 public class SHRINEHubPollService {
 	private static Log log = LogFactory.getLog(SHRINEHubPollService.class);
@@ -64,51 +74,72 @@ public class SHRINEHubPollService {
 					String crcDataSourceName = "QueryToolDemoDS";
 					DataSource crcDataSource = ServiceLocator.getInstance().getAppServerDataSource(crcDataSourceName);
 					Connection crcConn = crcDataSource.getConnection();
-					PreparedStatement crcStmt = crcConn.prepareStatement("EXEC SHRINE_UPDATE_RESULTS @queryId=?, @resultType=?, @x=?, @setSize=?, @status=?");
+					
+					/*
+					//SQL SERVER
+					PreparedStatement crcStmt = crcConn.prepareStatement("update a set a.XML_VALUE = ? from QT_XML_RESULT a join QT_QUERY_RESULT_INSTANCE b on a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ?");					
+					PreparedStatement crcStmt2 = crcConn.prepareStatement("update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?");
+					*/
+					
+					//PostGres
+					PreparedStatement crcStmt = crcConn.prepareStatement("update QT_XML_RESULT a set xml_value = ? from QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? where a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID");					
+					PreparedStatement crcStmt2 = crcConn.prepareStatement("update QT_QUERY_RESULT_INSTANCE b set SET_SIZE = ?, REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_STATUS_TYPE e	join QT_QUERY_RESULT_TYPE c on c.Name = ? join QT_QUERY_Instance d on d.QUERY_MASTER_ID = ? where e.NAME = ? and b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID");
+					
 					crcStmt.setQueryTimeout(transactionTimeout);
-					
-					
+					crcStmt2.setQueryTimeout(transactionTimeout);
 					/*if (csr.getSqlFinishedFlag()) {
 						timeoutFlag = true;
 						throw new CRCTimeOutException("The query was canceled.");
 					}*/
 					String deliveryAttemptID = "";
 
-				
+					Thread.sleep(1500);
 					System.out.println("Does it work? " + itCount);
 					for (int i = 0; i < 1000; i++)
 					{
 						lastPoll = Instant.now();
-						httpMessageResponse response = get("http://shrine-hub.shrine:8080/shrine-api/mom/receiveMessage/i2b2Plugin?timeOutSeconds=5");
+						//httpMessageResponse response = get("http://shrine-hub.shrine:8080/shrine-api/mom/receiveMessage/i2b2Plugin?timeOutSeconds=5");
+						httpMessageResponse response = get("https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/mom/receiveMessage/masscpri2b2qep?timeOutSeconds=5");
+						//httpMessageResponse response = get("http://localhost:6060/shrine-api/mom/receiveMessage/masscpri2b2qep?timeOutSeconds=5");
 						//Thread.sleep(5000);
-						System.out.println("Recursive print." + itCount + ":" + i);
-						stmt.setInt(1, response.statusCode);
-						stmt.setString(2, response.message);
-						ResultSet resultSet = stmt.executeQuery();
-						while (resultSet.next()) {
-							deliveryAttemptID = resultSet.getString("deliveryAttemptID");
-							int queryID = resultSet.getInt("queryId");
-							String resultType = resultSet.getString("resultType");
-							int setSize = resultSet.getInt("setSize");
-							String status = resultSet.getString("status");
-							String x = resultSet.getString("x");
-							
-							
-							if (status != null)
-							{
-								crcStmt.setInt(1, queryID);
-								crcStmt.setString(2, resultType);
-								crcStmt.setString(3, x);
-								crcStmt.setInt(4, setSize);
-								crcStmt.setString(5, status);
+						System.out.println("Recursive print. " + itCount + ":" + i);
+						System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
+						if (response.statusCode == 200)
+						{
+							stmt.setInt(1, response.statusCode);
+							stmt.setString(2, response.message);
+							ResultSet resultSet = stmt.executeQuery();
+							while (resultSet.next()) {
+								deliveryAttemptID = resultSet.getString("deliveryAttemptID");
+								int queryID = resultSet.getInt("queryId");
+								String resultType = resultSet.getString("resultType");
+								int setSize = resultSet.getInt("setSize");
+								String status = resultSet.getString("status");
+								String x = resultSet.getString("x");
 								
-								crcStmt.executeQuery();
+								
+								if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID))
+								{
+									crcStmt.setString(1, x);
+									crcStmt.setString(2, resultType);
+									crcStmt.setInt(3, queryID);
+									
+									crcStmt2.setInt(1, setSize);
+									crcStmt2.setInt(2, setSize);
+									crcStmt2.setString(3, resultType);
+									crcStmt2.setInt(4, queryID);
+									crcStmt2.setString(5, status);
+							
+									crcStmt.executeUpdate();
+									crcStmt2.executeUpdate();
+								}
 							}
+							log.info("\n\n\n\n\n\n\n\n\n\n\n\n\n" + deliveryAttemptID + "\n\n\n\n\n\n\n\n\n\n\n\n\n");
+							
+							//if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put("https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6060/shrine-api/mom/acknowledge/" + deliveryAttemptID);
+							if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put("https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/mom/acknowledge/" + deliveryAttemptID);
+							//if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put("http://shrine-hub.shrine:8080/shrine-api/mom/acknowledge/" + deliveryAttemptID);
 						}
-						log.info("\n\n\n\n\n\n\n\n\n\n\n\n\n" + deliveryAttemptID + "\n\n\n\n\n\n\n\n\n\n\n\n\n");
-						
-						if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put("http://shrine-hub.shrine:8080/shrine-api/mom/acknowledge/" + deliveryAttemptID);
-						
 						//new HttpRequestMessage(HttpMethod.Put, "http://shrine-hub.shrine:8080/shrine-api/mom/acknowledge/" + messageID);
 /*						
 
@@ -158,22 +189,34 @@ public class SHRINEHubPollService {
 		return lastPoll.plusMillis(pollInterval).compareTo(Instant.now()) >= 0;
 	}
 
+
 	public httpMessageResponse get(String apiurl){
 		httpMessageResponse response = new httpMessageResponse();
 		try{
+			System.out.println(apiurl);
 			URL url = new URL(apiurl);
-			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
 			connection.setRequestMethod("GET");
-			//connection.setDoOutput(true);
 			connection.setConnectTimeout(pollInterval * 2);
 			connection.setReadTimeout(pollInterval * 2);
-			//connection.setRequestProperty("Content-Type","application/json");
 			connection.setRequestProperty("Accept", "application/json");
-			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
-			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
-			//byte[] out = payload.getBytes(StandardCharsets.UTF_8);
-			//OutputStream stream = connection.getOutputStream();
-			//stream.write(out);
+			
+			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			KeyStore ks = KeyStore.getInstance("PKCS12");
+			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
+			ksStream.close();
+			
+			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+			kmf.init(ks, passphrase);
+
+			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
+			tmf.init(ks);
+
+			SSLContext sslContext = SSLContext.getInstance("TLS");
+			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
 
 			InputStream inputStream = connection.getInputStream();
 			String text = new BufferedReader(
@@ -186,27 +229,36 @@ public class SHRINEHubPollService {
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
-			System.out.println("Failed successfully");
+			System.out.println("SHRINE HUB POLL SERVICE get Failed successfully");
 		}
 		return response;
 	}
 	
-		public httpMessageResponse put(String apiurl){
+	public httpMessageResponse put(String apiurl){
 		httpMessageResponse response = new httpMessageResponse();
 		try{
 			URL url = new URL(apiurl);
-			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
 			connection.setRequestMethod("PUT");
-			//connection.setDoOutput(true);
 			connection.setConnectTimeout(pollInterval * 2);
 			connection.setReadTimeout(pollInterval * 2);
-			//connection.setRequestProperty("Content-Type","application/json");
 			connection.setRequestProperty("Accept", "application/json");
-			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
-			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
-			//byte[] out = payload.getBytes(StandardCharsets.UTF_8);
-			//OutputStream stream = connection.getOutputStream();
-			//stream.write(out);
+			
+			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			KeyStore ks = KeyStore.getInstance("PKCS12");
+			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
+
+			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+			kmf.init(ks, passphrase);
+
+			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
+			tmf.init(ks);
+
+			SSLContext sslContext = SSLContext.getInstance("TLS");
+			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
 
 			InputStream inputStream = connection.getInputStream();
 			String text = new BufferedReader(
@@ -219,7 +271,7 @@ public class SHRINEHubPollService {
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
-			System.out.println("Failed successfully");
+			System.out.println("SHRINE HUB POLL SERVICE put Failed successfully");
 		}
 		return response;
 	}
