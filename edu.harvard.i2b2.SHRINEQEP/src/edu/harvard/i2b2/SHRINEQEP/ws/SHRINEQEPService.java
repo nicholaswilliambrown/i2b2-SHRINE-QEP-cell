@@ -55,7 +55,6 @@ public class SHRINEQEPService {
 	 */
 	public OMElement helloWorld(OMElement helloElement) 
 			throws I2B2Exception {
-		log.info("\n\n\n\n\n\n\n\n\n\n\n\n\n Hello World!!! \n\n\n\n\n\n\n\n\n\n\n\n\n");
 		poller.startIfNotRunning();
 		return helloElement;
 

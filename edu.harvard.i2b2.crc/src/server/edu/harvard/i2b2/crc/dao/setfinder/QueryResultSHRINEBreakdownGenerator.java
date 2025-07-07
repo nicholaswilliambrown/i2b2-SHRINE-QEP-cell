@@ -50,6 +50,7 @@ import edu.harvard.i2b2.common.util.db.JDBCUtil;
 import edu.harvard.i2b2.common.util.jaxb.JAXBUtil;
 import edu.harvard.i2b2.crc.dao.CRCDAO;
 import edu.harvard.i2b2.crc.dao.SetFinderDAOFactory;
+import edu.harvard.i2b2.crc.dao.DAOFactoryHelper;
 import edu.harvard.i2b2.crc.dao.setfinder.querybuilder.ProcessTimingReportUtil;
 import edu.harvard.i2b2.crc.datavo.CRCJAXBUtil;
 import edu.harvard.i2b2.crc.datavo.db.QtQueryBreakdownType;
@@ -83,6 +84,9 @@ import java.security.SecureRandom;
 import java.security.KeyStore;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
+
+import edu.harvard.i2b2.crc.datavo.db.DataSourceLookup;
+
 /**
  * Setfinder's result genertor class. This class calculates patient break down
  * for the result type.
@@ -91,6 +95,11 @@ import javax.net.ssl.TrustManagerFactory;
  * calculates the patient count for each child of the result type.
  */
 public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResultGenerator {
+
+	// Confinguration Values
+	private final static String qepDataLookup = "***********************";
+	private final static String keystorePassphrase = "*********************";
+	private final static String keystorePath = "*************************";
 
 	protected final Logger logesapi = ESAPI.getLogger(getClass());
 
@@ -107,7 +116,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	@Override
 	public void generateResult(Map param) throws CRCTimeOutException,
 	I2B2DAOException {
-
+		System.out.println("\n\n\n\n\n\n\n QueryResultSHRINEBreakdownGenerator \n\n\n\n\n\n\n");
 		SetFinderConnection sfConn = (SetFinderConnection) param
 				.get("SetFinderConnection");
 		SetFinderDAOFactory sfDAOFactory = (SetFinderDAOFactory) param
@@ -148,7 +157,11 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			subLogTimingUtil.setStartTime();
 			
 			int resultInstanceIDPatientCountShrineXML = 0;
-		
+			
+			DataSourceLookup dataSourceLookup = sfDAOFactory.getDataSourceLookup();
+			
+			System.out.println("DataSource Type: " + dataSourceLookup.getServerType());
+			
 			PreparedStatement riipcsxstmt = sfConn.prepareStatement("select Result_Instance_ID from QT_QUERY_RESULT_INSTANCE a join QT_QUERY_RESULT_TYPE b on a.RESULT_TYPE_ID = b.RESULT_TYPE_ID and b.name = 'PATIENT_COUNT_SHRINE_XML' and QUERY_INSTANCE_ID = " + queryInstanceId);
 			riipcsxstmt.setQueryTimeout(transactionTimeout);
 
@@ -173,7 +186,13 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				return;
 			}
 			
-			PreparedStatement riipcsxstmt2 = sfConn.prepareStatement("insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, now(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'");
+			String riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, now(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'"; //Postgres 
+			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, getdate(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'";
+			//else if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.POSTGRESQL))
+			//else if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.ORACLE)
+			
+			
+			PreparedStatement riipcsxstmt2 = sfConn.prepareStatement(riipcsxstmt2sql);
 			riipcsxstmt2.setQueryTimeout(transactionTimeout);
 			riipcsxstmt2.executeUpdate();
 			riipcsxstmt2.close();
@@ -190,8 +209,12 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			riipcsxstmt.close();
 			
 			//PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values ?, '<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns10:i2b2_result_envelope xmlns:ns10=\"http://www.i2b2.org/xsd/hive/msg/result/1.1/\"><body><ns10:result name=\"PATIENT_COUNT_SHRINE_XML\" /><SHRINE /></body></ns10:i2b2_result_envelope>'");
-			PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values (?, '')");
-			riipcsxstmt3.setInt(1, resultInstanceIDPatientCountShrineXML);
+			//PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values (?, '')");
+			
+			String riipcsxstmt3sql = "insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) select a.RESULT_INSTANCE_ID, '<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns10:i2b2_result_envelope><body><ns10:result name=\"' || c.NAME || '\"></ns10:result></body></ns10:i2b2_result_envelope>'  From QT_QUERY_RESULT_INSTANCE a left join QT_XML_RESULT b on a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID join QT_QUERY_RESULT_TYPE c on a.RESULT_TYPE_ID = c.RESULT_TYPE_ID where QUERY_INSTANCE_ID = " + queryInstanceId + " and b.RESULT_INSTANCE_ID is null";
+			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt3sql = riipcsxstmt3sql.replace("||", "+");
+			PreparedStatement riipcsxstmt3 = sfConn.prepareStatement(riipcsxstmt3sql);
+			//riipcsxstmt3.setInt(1, queryInstanceId);
 			riipcsxstmt3.setQueryTimeout(transactionTimeout);
 			riipcsxstmt3.executeUpdate();
 			riipcsxstmt3.close();
@@ -215,7 +238,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			Thread csrThread = new Thread(csr);
 			csrThread.start();
 			
-			stmt = sfConn.prepareStatement("select a.query_master_id, request_xml  from QT_QUERY_INSTANCE a join QT_QUERY_MASTER b on a.query_master_id = b.query_master_id and query_instance_id = " + queryInstanceId);
+			stmt = sfConn.prepareStatement("select a.query_master_id, request_xml, i2b2_request_xml from QT_QUERY_INSTANCE a join QT_QUERY_MASTER b on a.query_master_id = b.query_master_id and query_instance_id = " + queryInstanceId);
 			stmt.setQueryTimeout(transactionTimeout);
 			
 			subLogTimingUtil.setStartTime();
@@ -226,49 +249,67 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			}
 			int queryMasterId = -1;
 			String requestXML = "";
+			String i2b2RequestXML = "";
 			
 			while (resultSet.next()) {
 				queryMasterId = resultSet.getInt("query_master_id");
 				requestXML = resultSet.getString("request_xml");
+				i2b2RequestXML = resultSet.getString("i2b2_request_xml");
 			}
 
 			csr.setSqlFinishedFlag();
 			csrThread.interrupt();
 			stmt.close();
 
+			i2b2RequestXML = i2b2RequestXML.replace("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>", "");
 
+			httpMessageResponse response = get(qepDataLookup);			
 
-			httpMessageResponse response = get("https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/hub/node/masscpr-i2b2-qep");			
+				String dataSourceName = "SHRINEDemoDS";
+				DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+				Connection conn = dataSource.getConnection();
+				PreparedStatement shrinestmt = conn.prepareStatement("EXEC [dbo].[SHRINE_CREATE_QUERY] @QueryMasterID=?, @x=?, @ix = ?");
+				shrinestmt.setInt(1, queryMasterId);
+				shrinestmt.setString(2, requestXML);
+				shrinestmt.setString(3, i2b2RequestXML);
+				//int transactionTimeout = 500;
+				shrinestmt.setQueryTimeout(transactionTimeout);
 
-			String dataSourceName = "SHRINEDemoDS";
-			DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
-			Connection conn = dataSource.getConnection();
-			PreparedStatement shrinestmt = conn.prepareStatement("EXEC [dbo].[SHRINE_CREATE_QUERY] @QueryMasterID=?, @x=?");
-			shrinestmt.setInt(1, queryMasterId);
-			shrinestmt.setString(2, requestXML);
-			//int transactionTimeout = 500;
-			shrinestmt.setQueryTimeout(transactionTimeout);
+				// NWB - Send the final query and get the results back/
+				//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
 
-			// NWB - Send the final query and get the results back/
-			//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-			//
-			subLogTimingUtil.setStartTime();
-			ResultSet shrineResultSet = shrinestmt.executeQuery();
-			/*if (csr.getSqlFinishedFlag()) {
-				timeoutFlag = true;
-				throw new CRCTimeOutException("The query was canceled.");
-			}*/
-			int qep_query_id = 0;
+				//
+			ResultSet shrineResultSet = null;
 			
-			while (shrineResultSet.next()) {
-				String hub_url = shrineResultSet.getString("hub_url");
-				String content = shrineResultSet.getString("content");
-				qep_query_id = shrineResultSet.getInt("qep_query_id");
-				sendRequest(hub_url, content);
+			try
+			{
+				subLogTimingUtil.setStartTime();
+				shrineResultSet = shrinestmt.executeQuery();
+				/*if (csr.getSqlFinishedFlag()) {
+					timeoutFlag = true;
+					throw new CRCTimeOutException("The query was canceled.");
+				}*/
+				int qep_query_id = 0;
+				
+				while (shrineResultSet.next()) {
+					String hub_url = shrineResultSet.getString("hub_url");
+					String content = shrineResultSet.getString("content");
+					qep_query_id = shrineResultSet.getInt("qep_query_id");
+					sendRequest(hub_url, content);
+				}
+				shrineResultSet.close();
+				shrinestmt.close();
+				conn.close();
 			}
-			shrinestmt.close();
-/*	
+			catch (Exception e)
+			{
+				if (shrineResultSet != null) shrineResultSet.close();
+				if (shrinestmt != null) shrinestmt.close();
+				if (conn != null) conn.close();
+				
+				throw(e);
+			}	
+/*		
 			for(int i = 0; i < 3; i++){
 				DataType mdataType = new DataType();
 				mdataType.setValue(String.valueOf(i * 10));
@@ -316,7 +357,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 
 			//Start the SHRINE listener
 			postToSHRINECell();
-
+/*
 			edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory of = new edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory();
 			BodyType bodyType = new BodyType();
 			bodyType.getAny().add(of.createResult(resultType));
@@ -348,7 +389,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				}
 			}
 			//tm.commit();
-
+*/
 		} catch (SQLException sqlEx) {
 			// catch oracle query timeout error ORA-01013
 			if (sqlEx.toString().indexOf("ORA-01013") > -1) {
@@ -370,7 +411,9 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			throw new I2B2DAOException(
 					"QueryResultPatientSetGenerator.generateResult:"
 							+ sqlEx.getMessage(), sqlEx);
-		} finally {
+		}
+/*
+		finally {
 
 			if (resultInstanceId != null) {
 				IQueryResultInstanceDao resultInstanceDao = sfDAOFactory
@@ -432,7 +475,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 					}
 				}
 			}
-		}
+		}*/
 
 	}
 
@@ -447,10 +490,9 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			connection.setRequestProperty("Accept", "application/json");
 			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 1");
 			
-			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
-			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 			ksStream.close();
 
@@ -494,10 +536,9 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			connection.setReadTimeout(5000);
 			connection.setRequestProperty("Accept", "application/json");
 			
-			char[] passphrase = "QHrwkr3G68Mg".toCharArray();
+			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
-			InputStream ksStream = new FileInputStream("/opt/wildfly-17.0.1.Final/keytool/keystore.ks");
+			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 			ksStream.close();
 			
