@@ -39,16 +39,30 @@ import javax.net.ssl.HttpsURLConnection;
 
 public class SHRINEHubPollService {
 	
+	/** 
+	* Set these values in the Hive database:
+	
+		delete from hive_cell_params where CELL_ID = 'SHRINE'
+
+		declare @i int
+		select @i = max(ID) from hive_cell_params
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 1, 'U', 'SHRINE', 'keystorePath', 'D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 2, 'U', 'SHRINE', 'keystorePassphrase', 'QHrwkr3G68Mg', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 3, 'U', 'SHRINE', 'qepQueueName', 'masscpri2b2devqep', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 4, 'U', 'SHRINE', 'crcDatabaseType', 'SQLSERVER', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 5, 'U', 'SHRINE', 'hubURL', 'https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/hub/node/masscpr-i2b2-qep', 'A')
+	**/
+	
 	//Values for Nick's local dev environment
-	private final static String keystorePath = "************************";
-	private final static String qepQueueName = "**********************";
-	private final static String crcDatabaseType = "********************";
+	private static String keystorePath = "";
+	private static String qepQueueName = "";
+	private static String crcDatabaseType = "";
 	
 		// Confinguration Values
-	private final static String qepDataLookup = "********************";
-	private final static String keystorePassphrase = "***************";
+	private static String qepDataLookup = "";
+	private static String keystorePassphrase = "";
 
-	private final static String hubURL = "****************";
+	private static String hubURL = "";
 	
 	
 	private static Log log = LogFactory.getLog(SHRINEHubPollService.class);
@@ -57,6 +71,37 @@ public class SHRINEHubPollService {
 	private static int tCount = 0;
 	private static Instant lastPoll = Instant.now().minusMillis(2*pollInterval);
 	
+	private void getConfiguration(){
+		DataSource dataSource;
+		try{  dataSource = ServiceLocator.getInstance().getAppServerDataSource("CRCBootStrapDS"); } catch (Exception e) { log.error("Exception locating datasource in getConfiguration: " + e); return; }
+		try(
+				Connection conn = dataSource.getConnection();
+				PreparedStatement stmt = conn.prepareStatement("select PARAM_NAME_CD, VALUE from " + conn.getSchema() + ".hive_cell_params where status_cd <> 'D' and cell_id = 'SHRINE'");
+			){
+			
+			ResultSet resultSet = stmt.executeQuery();
+			
+			String paramName = "";
+			String paramValue = "";
+
+			while (resultSet.next()) {
+				paramName = resultSet.getString("PARAM_NAME_CD");
+				paramValue = resultSet.getString("value");
+				
+				if("qepDataLookup".equals(paramName)) qepDataLookup = paramValue;
+				if("keystorePassphrase".equals(paramName)) keystorePassphrase = paramValue;
+				if("keystorePath".equals(paramName)) keystorePath = paramValue;
+				if("crcDatabaseType".equals(paramName)) crcDatabaseType = paramValue;
+				if("hubURL".equals(paramName)) hubURL = paramValue;
+				if("qepQueueName".equals(paramName)) qepQueueName = paramValue;
+			}
+			resultSet.close();
+		}
+		catch (Exception e)
+		{
+			log.error("Exception in getConfiguration: " + e);
+		}
+	}
 
 	
 	public void startIfNotRunning() {
@@ -71,6 +116,14 @@ public class SHRINEHubPollService {
 	
 	public void startService() {
 		log.info("SHRINEHubPollService.startService");
+		
+		getConfiguration();
+		if ("".equals(keystorePath)) 
+		{
+			log.error("Exception getting configuration in SHRINEHubPollService.startService");
+			return;
+		}
+		
 		int itCount = tCount;
 		tCount++;
 		Thread one = new Thread() {
@@ -97,6 +150,8 @@ public class SHRINEHubPollService {
 					String crcStmt4Sql = "select XML_RESULT_ID from QT_XML_RESULT where Result_instance_ID = ?"; // Get XML Result ID
 					String crcStmt5Sql = "update QT_XML_RESULT set XML_VALUE = ? where XML_RESULT_ID = ?"; // Update QT_XML_RESULT if record already exists
 					String crcStmt6Sql = "insert into QT_XML_RESULT(Result_Instance_ID, XML_Value) values (?, ?)"; // Insert into QT_XML_RESULT if no record 
+					//String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = 'FINISHED', STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'FINISHED') where QUERY_MASTER_ID = ?"; // 
+					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = 'FINISHED', STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'FINISHED') where QUERY_MASTER_ID = ?"; // 
 					
 					if ("SQLSERVER".equals(crcDatabaseType))
 					{
@@ -127,6 +182,7 @@ public class SHRINEHubPollService {
 					PreparedStatement crcStmt4 = crcConn.prepareStatement(crcStmt4Sql);
 					PreparedStatement crcStmt5 = crcConn.prepareStatement(crcStmt5Sql);
 					PreparedStatement crcStmt6 = crcConn.prepareStatement(crcStmt6Sql);
+					PreparedStatement crcStmt7 = crcConn.prepareStatement(crcStmt7Sql);
 					
 					
 					crcStmt.setQueryTimeout(transactionTimeout);
@@ -135,6 +191,7 @@ public class SHRINEHubPollService {
 					crcStmt4.setQueryTimeout(transactionTimeout);
 					crcStmt5.setQueryTimeout(transactionTimeout);
 					crcStmt6.setQueryTimeout(transactionTimeout);
+					crcStmt7.setQueryTimeout(transactionTimeout);
 					/*if (csr.getSqlFinishedFlag()) {
 						timeoutFlag = true;
 						throw new CRCTimeOutException("The query was canceled.");
@@ -143,123 +200,152 @@ public class SHRINEHubPollService {
 
 					Thread.sleep(1500);
 					System.out.println("Does it work? " + itCount);
-					for (int i = 0; i < 50; i++)
-					{
-						lastPoll = Instant.now();
-						httpMessageResponse response = get(hubURL + "/mom/receiveMessage/" + qepQueueName + "?timeOutSeconds=5");
-						//Thread.sleep(5000);
-						System.out.println("Recursive print. " + itCount + ":" + i);
-						System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
-						if (response.statusCode == 200)
+					try{
+						//for (int i = 0; i < 50; i++)
+						while(true)
 						{
-							stmt.setInt(1, response.statusCode);
-							stmt.setString(2, response.message);
-							ResultSet resultSet = stmt.executeQuery();
-							while (resultSet.next()) {
-								deliveryAttemptID = resultSet.getString("deliveryAttemptID");
-								int queryID = resultSet.getInt("queryId");
-								String resultType = resultSet.getString("resultType");
-								int setSize = resultSet.getInt("setSize");
-								String status = resultSet.getString("status");
-								String x = resultSet.getString("x");
-								
-								try{
-									if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID))
-									{
-										crcStmt.setInt(1, queryID);
-										crcStmt.setString(2, resultType);
-										int resultInstanceID = 0;
-										ResultSet crcResultSet = crcStmt.executeQuery();
-										while (crcResultSet.next()) {
-											resultInstanceID = crcResultSet.getInt("RESULT_INSTANCE_ID");
-										}
-										crcResultSet.close();
-										if (resultInstanceID == 0){
-											crcStmt3.setInt(2, queryID);
-											crcStmt3.setString(1, resultType);
-											crcStmt3.executeUpdate();
-											
-											crcResultSet = crcStmt.executeQuery();
+							lastPoll = Instant.now();
+							httpMessageResponse response = get(hubURL + "/mom/receiveMessage/" + qepQueueName + "?timeOutSeconds=5");
+							//Thread.sleep(5000);
+							//System.out.println("Recursive print. " + itCount + ":" + i);
+							System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
+							if (response.statusCode == 200)
+							{
+								stmt.setInt(1, response.statusCode);
+								stmt.setString(2, response.message);
+								ResultSet resultSet = stmt.executeQuery();
+								boolean firstLoop = true;
+								while (resultSet.next()) {
+									deliveryAttemptID = resultSet.getString("deliveryAttemptID");
+									int queryID = resultSet.getInt("queryId");
+									String resultType = resultSet.getString("resultType");
+									int setSize = resultSet.getInt("setSize");
+									String status = resultSet.getString("status");
+									String x = resultSet.getString("x");
+									
+									try{
+										if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID))
+										{
+											crcStmt.setInt(1, queryID);
+											crcStmt.setString(2, resultType);
+											int resultInstanceID = 0;
+											ResultSet crcResultSet = crcStmt.executeQuery();
 											while (crcResultSet.next()) {
 												resultInstanceID = crcResultSet.getInt("RESULT_INSTANCE_ID");
 											}
 											crcResultSet.close();
-										}
-										
-										crcStmt2.setInt(1, setSize);
-										crcStmt2.setInt(2, setSize);
-										crcStmt2.setString(3, resultType);
-										crcStmt2.setInt(4, queryID);
-										crcStmt2.setString(5, status);
-										crcStmt2.executeUpdate();
-										
-										crcStmt4.setInt(1, resultInstanceID);
-										log.info("resultInstanceID: " + resultInstanceID);
-										int xmlResultID = 0;
-										crcResultSet = crcStmt4.executeQuery();
-										while (crcResultSet.next()) {
-											xmlResultID = crcResultSet.getInt("XML_RESULT_ID");
-										}
-										crcResultSet.close();
-										log.info("xmlResultID: " + xmlResultID);
-										if (xmlResultID > 0){
-											crcStmt5.setString(1, x);
-											crcStmt5.setInt(2, xmlResultID);
-											crcStmt5.executeUpdate();
-										}
-										else {
-											crcStmt6.setInt(1, resultInstanceID);
-											crcStmt6.setString(2, x);
-											crcStmt6.executeUpdate();
+											if (resultInstanceID == 0){
+												crcStmt3.setInt(2, queryID);
+												crcStmt3.setString(1, resultType);
+												crcStmt3.executeUpdate();
+												
+												crcResultSet = crcStmt.executeQuery();
+												while (crcResultSet.next()) {
+													resultInstanceID = crcResultSet.getInt("RESULT_INSTANCE_ID");
+												}
+												crcResultSet.close();
+											}
+											
+											crcStmt2.setInt(1, setSize);
+											crcStmt2.setInt(2, setSize);
+											crcStmt2.setString(3, resultType);
+											crcStmt2.setInt(4, queryID);
+											crcStmt2.setString(5, status);
+											crcStmt2.executeUpdate();
+											
+											crcStmt4.setInt(1, resultInstanceID);
+											log.info("resultInstanceID: " + resultInstanceID);
+											int xmlResultID = 0;
+											crcResultSet = crcStmt4.executeQuery();
+											while (crcResultSet.next()) {
+												xmlResultID = crcResultSet.getInt("XML_RESULT_ID");
+											}
+											crcResultSet.close();
+											log.info("xmlResultID: " + xmlResultID);
+											if (xmlResultID > 0){
+												crcStmt5.setString(1, x);
+												crcStmt5.setInt(2, xmlResultID);
+												crcStmt5.executeUpdate();
+											}
+											else {
+												crcStmt6.setInt(1, resultInstanceID);
+												crcStmt6.setString(2, x);
+												crcStmt6.executeUpdate();
+											}
+											
+											if (firstLoop)
+											{
+												firstLoop = false;
+												if ("FINISHED".equals(status))
+												{
+													crcStmt7.setInt(1, queryID);
+													//crcStmt7.setString(2, x);
+													crcStmt7.executeUpdate();
+												}
+											}
+											firstLoop = false;
+											
+											//stmt.close();
+											//crcStmt.close();
+											//crcStmt2.close();
+											//crcStmt3.close();
+											//crcStmt4.close();
+											//crcStmt5.close();
+											//crcStmt6.close();
+											//crcStmt7.close();
 										}
 									}
+									catch(Exception v) {
+										System.out.println(v);
+									}
 								}
-								catch(Exception v) {
-									System.out.println(v);
-								}
+								resultSet.close();
+								log.info("\nSHRINE DELIVERY ATTEMPT ID: " + deliveryAttemptID + "\n");
+								
+								if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put(hubURL + "/mom/acknowledge/" + deliveryAttemptID);
 							}
-							resultSet.close();
-							log.info("\nSHRINE DELIVERY ATTEMPT ID: " + deliveryAttemptID + "\n");
+	/*						
+
+
+							PreparedStatement stmt = null;
+							Connection conn = = new Connection 
+							stmt = sfConn.prepareStatement("exec [dbo].[SHRINE_CREATE_QUERY] @QueryInstanceID=" + queryInstanceId);
+							stmt.setQueryTimeout(transactionTimeout);
+							//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
+
+							//
+							subLogTimingUtil.setStartTime();
+							ResultSet resultSet = stmt.executeQuery();
+							if (csr.getSqlFinishedFlag()) {
+								timeoutFlag = true;
+								throw new CRCTimeOutException("The query was canceled.");
+							}
+							int qep_query_id = 0;
 							
-							if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put(hubURL + "/mom/acknowledge/" + deliveryAttemptID);
+							while (resultSet.next()) {
+								String hub_url = resultSet.getString("hub_url");
+								String content = resultSet.getString("content");
+								qep_query_id = resultSet.getInt("qep_query_id");
+								sendRequest(hub_url, content);
+							}
+	*/
 						}
-/*						
-
-
-						PreparedStatement stmt = null;
-						Connection conn = = new Connection 
-						stmt = sfConn.prepareStatement("exec [dbo].[SHRINE_CREATE_QUERY] @QueryInstanceID=" + queryInstanceId);
-						stmt.setQueryTimeout(transactionTimeout);
-						//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-						//
-						subLogTimingUtil.setStartTime();
-						ResultSet resultSet = stmt.executeQuery();
-						if (csr.getSqlFinishedFlag()) {
-							timeoutFlag = true;
-							throw new CRCTimeOutException("The query was canceled.");
-						}
-						int qep_query_id = 0;
-						
-						while (resultSet.next()) {
-							String hub_url = resultSet.getString("hub_url");
-							String content = resultSet.getString("content");
-							qep_query_id = resultSet.getInt("qep_query_id");
-							sendRequest(hub_url, content);
-						}
-*/
 					}
+					catch(Exception v) {
+						stmt.close();
+						crcStmt.close();
+						crcStmt2.close();
+						crcStmt3.close();
+						crcStmt4.close();
+						crcStmt5.close();
+						crcStmt6.close();
+						crcStmt7.close();
+						conn.close();
+						crcConn.close();
+						System.out.println(v);
+					}
+					//System.out.println("final print." + itCount);
 
-					System.out.println("final print." + itCount);
-					stmt.close();
-					crcStmt.close();
-					crcStmt2.close();
-					crcStmt3.close();
-					crcStmt4.close();
-					crcStmt5.close();
-					crcStmt6.close();
-					conn.close();
-					crcConn.close();
 					
 				} catch(Exception v) {
 					System.out.println(v);
