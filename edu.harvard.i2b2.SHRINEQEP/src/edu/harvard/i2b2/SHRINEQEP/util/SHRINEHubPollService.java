@@ -138,20 +138,17 @@ public class SHRINEHubPollService {
 					dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
 					crcDataSource = ServiceLocator.getInstance().getAppServerDataSource(crcDataSourceName);
 				} catch (Exception e) { log.error("Exception locating datasources in SHRINEHubPollService.startService: " + e); return; }
-				try {
-					
+				try 
+				(
 					Connection conn = dataSource.getConnection();
+					Connection crcConn = crcDataSource.getConnection();
+				)
+				{
+					
+					
 					PreparedStatement stmt = conn.prepareStatement("EXEC newQepReceivedMessage @httpStatus=?, @message=?");
 					int transactionTimeout = 500;
 					stmt.setQueryTimeout(transactionTimeout);
-					//LogTimingUtil subLogTimingUtil = new LogTimingUtil();
-					//subLogTimingUtil.setStartTime();
-					
-					
-					
-					
-					Connection crcConn = crcDataSource.getConnection();
-
 
 					String crcStmtSql = "select RESULT_INSTANCE_ID from QT_QUERY_RESULT_INSTANCE a join QT_QUERY_INSTANCE b on a.QUERY_INSTANCE_ID = b.QUERY_INSTANCE_ID and QUERY_MASTER_ID = ? join QT_QUERY_RESULT_TYPE c on a.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.NAME = ?"; // Get Result Instance ID
 					String crcStmt2Sql = ""; // Update QT_QUERY_RESULT_INSTANCE
@@ -159,31 +156,19 @@ public class SHRINEHubPollService {
 					String crcStmt4Sql = "select XML_RESULT_ID from QT_XML_RESULT where Result_instance_ID = ?"; // Get XML Result ID
 					String crcStmt5Sql = "update QT_XML_RESULT set XML_VALUE = ? where XML_RESULT_ID = ?"; // Update QT_XML_RESULT if record already exists
 					String crcStmt6Sql = "insert into QT_XML_RESULT(Result_Instance_ID, XML_Value) values (?, ?)"; // Insert into QT_XML_RESULT if no record 
-					//String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = 'FINISHED', STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'FINISHED') where QUERY_MASTER_ID = ?"; // 
 					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = ?, STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = ?) where QUERY_MASTER_ID = ?"; // 
 					
 					if ("SQLSERVER".equals(crcDatabaseType))
 					{
-						//crcStmt5Sql = "update a set a.XML_VALUE = ? from QT_XML_RESULT a join QT_QUERY_RESULT_INSTANCE b on a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ?";
 						crcStmt2Sql ="update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?";
 						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select query_instance_id, Result_Type_ID, getDate(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
 					}
 					else if ("POSTGRES".equals(crcDatabaseType))
 					{
-						//crcStmt5Sql = "update QT_XML_RESULT a set xml_value = ? from QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? where a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID";
 						crcStmt2Sql = "update QT_QUERY_RESULT_INSTANCE b set SET_SIZE = ?, REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_STATUS_TYPE e	join QT_QUERY_RESULT_TYPE c on c.Name = ? join QT_QUERY_Instance d on d.QUERY_MASTER_ID = ? where e.NAME = ? and b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID";
 						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select c.query_instance_id, a.Result_Type_ID, now(), b.STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
 					}
-					/*
-					//SQL SERVER
-					PreparedStatement crcStmt = crcConn.prepareStatement("update a set a.XML_VALUE = ? from QT_XML_RESULT a join QT_QUERY_RESULT_INSTANCE b on a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ?");					
-					PreparedStatement crcStmt2 = crcConn.prepareStatement("update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?");
-					*/
-					/*
-					//PostGres
-					PreparedStatement crcStmt = crcConn.prepareStatement("update QT_XML_RESULT a set xml_value = ? from QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? where a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID");					
-					PreparedStatement crcStmt2 = crcConn.prepareStatement("update QT_QUERY_RESULT_INSTANCE b set SET_SIZE = ?, REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_STATUS_TYPE e	join QT_QUERY_RESULT_TYPE c on c.Name = ? join QT_QUERY_Instance d on d.QUERY_MASTER_ID = ? where e.NAME = ? and b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID");
-					*/
+
 					
 					PreparedStatement crcStmt = crcConn.prepareStatement(crcStmtSql);
 					PreparedStatement crcStmt2 = crcConn.prepareStatement(crcStmt2Sql);
@@ -201,22 +186,17 @@ public class SHRINEHubPollService {
 					crcStmt5.setQueryTimeout(transactionTimeout);
 					crcStmt6.setQueryTimeout(transactionTimeout);
 					crcStmt7.setQueryTimeout(transactionTimeout);
-					/*if (csr.getSqlFinishedFlag()) {
-						timeoutFlag = true;
-						throw new CRCTimeOutException("The query was canceled.");
-					}*/
+
 					String deliveryAttemptID = "";
 
 					Thread.sleep(1500);
-					//System.out.println("Does it work? " + itCount);
 					try{
 						//for (int i = 0; i < 50; i++)
 						while(true)
 						{
 							lastPoll = Instant.now();
 							httpMessageResponse response = get(hubURL + "/mom/receiveMessage/" + qepQueueName + "?timeOutSeconds=5");
-							//Thread.sleep(5000);
-							//System.out.println("Recursive print. " + itCount + ":" + i);
+
 							System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
 							if (response.statusCode == 200)
 							{
@@ -311,15 +291,6 @@ public class SHRINEHubPollService {
 												}
 											}
 											firstLoop = false;
-											
-											//stmt.close();
-											//crcStmt.close();
-											//crcStmt2.close();
-											//crcStmt3.close();
-											//crcStmt4.close();
-											//crcStmt5.close();
-											//crcStmt6.close();
-											//crcStmt7.close();
 										}
 									}
 									catch(Exception v) {
@@ -331,31 +302,6 @@ public class SHRINEHubPollService {
 								
 								if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put(hubURL + "/mom/acknowledge/" + deliveryAttemptID);
 							}
-	/*						
-
-
-							PreparedStatement stmt = null;
-							Connection conn = = new Connection 
-							stmt = sfConn.prepareStatement("exec [dbo].[SHRINE_CREATE_QUERY] @QueryInstanceID=" + queryInstanceId);
-							stmt.setQueryTimeout(transactionTimeout);
-							//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-							//
-							subLogTimingUtil.setStartTime();
-							ResultSet resultSet = stmt.executeQuery();
-							if (csr.getSqlFinishedFlag()) {
-								timeoutFlag = true;
-								throw new CRCTimeOutException("The query was canceled.");
-							}
-							int qep_query_id = 0;
-							
-							while (resultSet.next()) {
-								String hub_url = resultSet.getString("hub_url");
-								String content = resultSet.getString("content");
-								qep_query_id = resultSet.getInt("qep_query_id");
-								sendRequest(hub_url, content);
-							}
-	*/
 						}
 					}
 					catch(Exception v) {
@@ -367,12 +313,8 @@ public class SHRINEHubPollService {
 						crcStmt5.close();
 						crcStmt6.close();
 						crcStmt7.close();
-						conn.close();
-						crcConn.close();
 						System.out.println(v);
 					}
-					//System.out.println("final print." + itCount);
-
 					
 				} catch(Exception v) {
 					System.out.println(v);
@@ -404,7 +346,6 @@ public class SHRINEHubPollService {
 			
 			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
 			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 			ksStream.close();
@@ -424,9 +365,7 @@ public class SHRINEHubPollService {
 			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
 				.lines()
 				.collect(Collectors.joining("\n"));
-			//System.out.println(text);
 			response.update(connection.getResponseCode(), text);
-			//System.out.println(response.statusCode + " " + response.message); // THis is optional
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
@@ -447,7 +386,6 @@ public class SHRINEHubPollService {
 			
 			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			//InputStream ksStream = new FileInputStream("D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks");
 			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 
@@ -466,9 +404,7 @@ public class SHRINEHubPollService {
 			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
 				.lines()
 				.collect(Collectors.joining("\n"));
-			//System.out.println(text);
 			response.update(connection.getResponseCode(), text);
-			//System.out.println(response.statusCode + " " + response.message); // THis is optional
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
