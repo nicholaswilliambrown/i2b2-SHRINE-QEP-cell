@@ -446,6 +446,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			/*****
 			We could add polling for query completion here. That would introduce some unnecessary database transactions, but free up the thread quicker.
 			*****/
+			/*
 			Thread.sleep(1000 * queryWaitTime); //debugging timeout		
 			String riipcsxstmt1asql = "update QT_QUERY_INSTANCE set STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'MEDIUM_QUEUE'), BATCH_MODE = 'MEDIUM_QUEUE' where QUERY_INSTANCE_ID = " + queryInstanceId;// + " and BATCH_MODE = 'RUNNING'";
 			PreparedStatement riipcsxstmt1a = sfConn.prepareStatement(riipcsxstmt1asql);
@@ -453,6 +454,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			riipcsxstmt1a.setQueryTimeout(transactionTimeout);
 			riipcsxstmt1a.executeUpdate();
 			riipcsxstmt1a.close();
+			*/
 			
 		} catch (SQLException sqlEx) {
 			// catch oracle query timeout error ORA-01013

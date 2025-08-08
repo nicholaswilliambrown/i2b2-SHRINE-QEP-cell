@@ -47,23 +47,25 @@ public class SHRINEHubPollService {
 		declare @i int
 		select @i = max(ID) from hive_cell_params
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 1, 'U', 'SHRINE', 'keystorePath', 'D:/i2b2/wildfly-17.0.1.Final/keytool/keystore.ks', 'A')
-		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 2, 'U', 'SHRINE', 'keystorePassphrase', 'QHrwkr3G68Mg', 'A')
-		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 3, 'U', 'SHRINE', 'qepQueueName', 'masscpri2b2devqep', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 2, 'U', 'SHRINE', 'keystorePassphrase', '***********', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 3, 'U', 'SHRINE', 'qepQueueName', 'i2b2devqep', 'A')
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 4, 'U', 'SHRINE', 'crcDatabaseType', 'SQLSERVER', 'A')
-		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 5, 'U', 'SHRINE', 'hubURL', 'https://shrine-masscpr-dev-hub.catalyst.harvard.edu:6443/shrine-api/hub/node/masscpr-i2b2-qep', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 5, 'U', 'SHRINE', 'hubURL', 'https://shrine-hub.example.com:6443/shrine-api', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 6, 'U', 'SHRINE', 'queryWaitTime', '240', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 7, 'U', 'SHRINE', 'qepDataLookup', 'https://shrine-hub.example.com:6443/shrine-api/hub/node/i2b2-dev-qep', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 8, 'U', 'SHRINE', 'dataSourceName', 'SHRINEDemoDS', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 9, 'U', 'SHRINE', 'crcDataSourceName', 'QueryToolDemoDS', 'A')
 	**/
 	
-	//Values for Nick's local dev environment
+	// Configuration Values loaded from Hive database.
 	private static String keystorePath = "";
 	private static String qepQueueName = "";
 	private static String crcDatabaseType = "";
-	
-		// Confinguration Values
 	private static String qepDataLookup = "";
 	private static String keystorePassphrase = "";
-
 	private static String hubURL = "";
-	
+	private static String dataSourceName = "";
+	private static String crcDataSourceName = "";
 	
 	private static Log log = LogFactory.getLog(SHRINEHubPollService.class);
 	protected final Logger logesapi = ESAPI.getLogger(getClass());
@@ -94,6 +96,8 @@ public class SHRINEHubPollService {
 				if("crcDatabaseType".equals(paramName)) crcDatabaseType = paramValue;
 				if("hubURL".equals(paramName)) hubURL = paramValue;
 				if("qepQueueName".equals(paramName)) qepQueueName = paramValue;
+				if("dataSourceName".equals(paramName)) dataSourceName = paramValue;
+				if("crcDataSourceName".equals(paramName)) crcDataSourceName = paramValue;
 			}
 			resultSet.close();
 		}
@@ -128,9 +132,14 @@ public class SHRINEHubPollService {
 		tCount++;
 		Thread one = new Thread() {
 			public void run() {
+				DataSource dataSource;
+				DataSource crcDataSource;
+				try	{  
+					dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+					crcDataSource = ServiceLocator.getInstance().getAppServerDataSource(crcDataSourceName);
+				} catch (Exception e) { log.error("Exception locating datasources in SHRINEHubPollService.startService: " + e); return; }
 				try {
-					String dataSourceName = "SHRINEDemoDS";
-					DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+					
 					Connection conn = dataSource.getConnection();
 					PreparedStatement stmt = conn.prepareStatement("EXEC newQepReceivedMessage @httpStatus=?, @message=?");
 					int transactionTimeout = 500;
@@ -139,8 +148,8 @@ public class SHRINEHubPollService {
 					//subLogTimingUtil.setStartTime();
 					
 					
-					String crcDataSourceName = "QueryToolDemoDS";
-					DataSource crcDataSource = ServiceLocator.getInstance().getAppServerDataSource(crcDataSourceName);
+					
+					
 					Connection crcConn = crcDataSource.getConnection();
 
 
@@ -151,7 +160,7 @@ public class SHRINEHubPollService {
 					String crcStmt5Sql = "update QT_XML_RESULT set XML_VALUE = ? where XML_RESULT_ID = ?"; // Update QT_XML_RESULT if record already exists
 					String crcStmt6Sql = "insert into QT_XML_RESULT(Result_Instance_ID, XML_Value) values (?, ?)"; // Insert into QT_XML_RESULT if no record 
 					//String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = 'FINISHED', STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'FINISHED') where QUERY_MASTER_ID = ?"; // 
-					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = 'FINISHED', STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'FINISHED') where QUERY_MASTER_ID = ?"; // 
+					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = ?, STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = ?) where QUERY_MASTER_ID = ?"; // 
 					
 					if ("SQLSERVER".equals(crcDatabaseType))
 					{
@@ -199,7 +208,7 @@ public class SHRINEHubPollService {
 					String deliveryAttemptID = "";
 
 					Thread.sleep(1500);
-					System.out.println("Does it work? " + itCount);
+					//System.out.println("Does it work? " + itCount);
 					try{
 						//for (int i = 0; i < 50; i++)
 						while(true)
@@ -276,9 +285,27 @@ public class SHRINEHubPollService {
 											if (firstLoop)
 											{
 												firstLoop = false;
+												if ("PROCESSING".equals(status))
+												{
+													crcStmt7.setString(1, "RUNNING");
+													crcStmt7.setString(2, "PROCESSING");
+													crcStmt7.setInt(3, queryID);
+													//crcStmt7.setString(2, x);
+													crcStmt7.executeUpdate();
+												}
 												if ("FINISHED".equals(status))
 												{
-													crcStmt7.setInt(1, queryID);
+													crcStmt7.setString(1, "FINISHED");
+													crcStmt7.setString(2, "FINISHED");
+													crcStmt7.setInt(3, queryID);
+													//crcStmt7.setString(2, x);
+													crcStmt7.executeUpdate();
+												}
+												if ("ERROR".equals(status))
+												{
+													crcStmt7.setString(1, "ERROR");
+													crcStmt7.setString(2, "ERROR");
+													crcStmt7.setInt(3, queryID);
 													//crcStmt7.setString(2, x);
 													crcStmt7.executeUpdate();
 												}
@@ -360,10 +387,6 @@ public class SHRINEHubPollService {
 	
 	private boolean serviceRunning()
 	{
-		System.out.println(lastPoll);
-		System.out.println(lastPoll.plusMillis(pollInterval));
-		System.out.println(Instant.now());
-		System.out.println(lastPoll.plusMillis(pollInterval).compareTo(Instant.now()));
 		return lastPoll.plusMillis(pollInterval).compareTo(Instant.now()) >= 0;
 	}
 
