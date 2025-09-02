@@ -55,6 +55,7 @@ public class SHRINEHubPollService {
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 7, 'U', 'SHRINE', 'qepDataLookup', 'https://shrine-hub.example.com:6443/shrine-api/hub/node/i2b2-dev-qep', 'A')
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 8, 'U', 'SHRINE', 'dataSourceName', 'SHRINEDemoDS', 'A')
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 9, 'U', 'SHRINE', 'crcDataSourceName', 'QueryToolDemoDS', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 10, 'U', 'SHRINE', 'shrineCellURL', 'http://localhost:9090/i2b2/services/SHRINEQEPService', 'A')
 	**/
 	
 	// Configuration Values loaded from Hive database.

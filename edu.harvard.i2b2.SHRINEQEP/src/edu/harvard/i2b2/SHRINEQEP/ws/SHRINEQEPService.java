@@ -53,7 +53,7 @@ public class SHRINEQEPService {
 	 * @return OMElement in i2b2message format
 	 * @throws Exception
 	 */
-	public OMElement helloWorld(OMElement helloElement) 
+	public OMElement startListener(OMElement helloElement) 
 			throws I2B2Exception {
 		poller.startIfNotRunning();
 		return helloElement;

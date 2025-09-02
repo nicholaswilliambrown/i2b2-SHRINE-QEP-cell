@@ -101,6 +101,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	private static String keystorePassphrase = "";
 	private static String keystorePath = "";
 	private static int queryWaitTime = 60;
+	private static String shrineCellURL = "";
 	
 	private void getConfiguration(){
 		DataSource dataSource;
@@ -123,6 +124,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				if("keystorePassphrase".equals(paramName)) keystorePassphrase = paramValue;
 				if("keystorePath".equals(paramName)) keystorePath = paramValue;
 				if("queryWaitTime".equals(paramName)) queryWaitTime = Integer.parseInt(paramValue);
+				if("shrineCellURL".equals(paramName)) shrineCellURL = paramValue;
 			}
 			resultSet.close();
 		}
@@ -156,7 +158,6 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			return;
 		}
 		
-		//System.out.println("\n\n\n\n\n\n\n QueryResultSHRINEBreakdownGenerator \n\n\n\n\n\n\n");
 		SetFinderConnection sfConn = (SetFinderConnection) param
 				.get("SetFinderConnection");
 		SetFinderDAOFactory sfDAOFactory = (SetFinderDAOFactory) param
@@ -639,7 +640,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	
 	public static void postToSHRINECell(){
 		try{
-			String apiurl = "http://localhost:9090/i2b2/services/SHRINEQEPService/helloWorld";
+			String apiurl = shrineCellURL + "/startListener";
 			String payload = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns6:request xmlns:ns4=\"http://www.i2b2.org/xsd/cell/crc/psm/1.1/\" xmlns:ns7=\"http://www.i2b2.org/xsd/cell/crc/psm/querydefinition/1.1/\" xmlns:ns3=\"http://www.i2b2.org/xsd/cell/crc/pdo/1.1/\" xmlns:ns5=\"http://www.i2b2.org/xsd/hive/plugin/\" xmlns:ns2=\"http://www.i2b2.org/xsd/hive/pdo/1.1/\" xmlns:ns6=\"http://www.i2b2.org/xsd/hive/msg/1.1/\"><message_header><proxy><redirect_url>http://localhost:9090/i2b2/services/SHRINEQEPService/helloWorld</redirect_url></proxy></message_header></ns6:request>";
 			
 			URL url = new URL(apiurl);
