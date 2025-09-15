@@ -56,6 +56,7 @@ public class SHRINEHubPollService {
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 8, 'U', 'SHRINE', 'dataSourceName', 'SHRINEDemoDS', 'A')
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 9, 'U', 'SHRINE', 'crcDataSourceName', 'QueryToolDemoDS', 'A')
 		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 10, 'U', 'SHRINE', 'shrineCellURL', 'http://localhost:9090/i2b2/services/SHRINEQEPService', 'A')
+		insert into hive_cell_params (ID, DATATYPE_CD, CELL_ID, PARAM_NAME_CD, VALUE, STATUS_CD) values (@i + 11, 'U', 'SHRINE', 'clientSecret', 'changeME!!!', 'A')
 	**/
 	
 	// Configuration Values loaded from Hive database.
@@ -64,9 +65,10 @@ public class SHRINEHubPollService {
 	private static String crcDatabaseType = "";
 	private static String qepDataLookup = "";
 	private static String keystorePassphrase = "";
-	private static String hubURL = "";
+	private static String hubURL = null;
 	private static String dataSourceName = "";
 	private static String crcDataSourceName = "";
+	private static String clientSecret = null;
 	
 	private static Log log = LogFactory.getLog(SHRINEHubPollService.class);
 	protected final Logger logesapi = ESAPI.getLogger(getClass());
@@ -74,7 +76,11 @@ public class SHRINEHubPollService {
 	private static int tCount = 0;
 	private static Instant lastPoll = Instant.now().minusMillis(2*pollInterval);
 	
-	private void getConfiguration(){
+	public static int latestMessage = Integer.MAX_VALUE;
+	
+	private static void getConfiguration(){
+		if(hubURL != null) return; // We only need to run this once. i2b2 should be restarted to change configuration
+		
 		DataSource dataSource;
 		try{  dataSource = ServiceLocator.getInstance().getAppServerDataSource("CRCBootStrapDS"); } catch (Exception e) { log.error("Exception locating datasource in getConfiguration: " + e); return; }
 		try(
@@ -99,6 +105,7 @@ public class SHRINEHubPollService {
 				if("qepQueueName".equals(paramName)) qepQueueName = paramValue;
 				if("dataSourceName".equals(paramName)) dataSourceName = paramValue;
 				if("crcDataSourceName".equals(paramName)) crcDataSourceName = paramValue;
+				if("clientSecret".equals(paramName)) clientSecret = paramValue;
 			}
 			resultSet.close();
 		}
@@ -110,17 +117,15 @@ public class SHRINEHubPollService {
 
 	
 	public void startIfNotRunning() {
-		log.info("SHRINEHubPollService.startIfNotRunning");
 		if (!serviceRunning())
 		{
 			startService();
 		}
-
 	}
 
 	
 	public void startService() {
-		log.info("SHRINEHubPollService.startService");
+		log.debug("SHRINEHubPollService.startService");
 		
 		getConfiguration();
 		if ("".equals(keystorePath)) 
@@ -212,6 +217,7 @@ public class SHRINEHubPollService {
 									int setSize = resultSet.getInt("setSize");
 									String status = resultSet.getString("status");
 									String x = resultSet.getString("x");
+									int messageID = resultSet.getInt("messageID");
 									
 									try{
 										if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID))
@@ -244,14 +250,12 @@ public class SHRINEHubPollService {
 											crcStmt2.executeUpdate();
 											
 											crcStmt4.setInt(1, resultInstanceID);
-											log.info("resultInstanceID: " + resultInstanceID);
 											int xmlResultID = 0;
 											crcResultSet = crcStmt4.executeQuery();
 											while (crcResultSet.next()) {
 												xmlResultID = crcResultSet.getInt("XML_RESULT_ID");
 											}
 											crcResultSet.close();
-											log.info("xmlResultID: " + xmlResultID);
 											if (xmlResultID > 0){
 												crcStmt5.setString(1, x);
 												crcStmt5.setInt(2, xmlResultID);
@@ -265,6 +269,7 @@ public class SHRINEHubPollService {
 											
 											if (firstLoop)
 											{
+												latestMessage = messageID;
 												firstLoop = false;
 												if ("PROCESSING".equals(status))
 												{
@@ -299,7 +304,7 @@ public class SHRINEHubPollService {
 									}
 								}
 								resultSet.close();
-								log.info("\nSHRINE DELIVERY ATTEMPT ID: " + deliveryAttemptID + "\n");
+								log.debug("\nSHRINE DELIVERY ATTEMPT ID: " + deliveryAttemptID + "\n");
 								
 								if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID)) put(hubURL + "/mom/acknowledge/" + deliveryAttemptID);
 							}
@@ -412,6 +417,55 @@ public class SHRINEHubPollService {
 			System.out.println("SHRINE HUB POLL SERVICE put Failed successfully");
 		}
 		return response;
+	}
+	
+	public static String getCRCMessage(int queryID, int previousMessageID, String _clientSecret)
+	{
+		getConfiguration();
+		if(!clientSecret.equals(_clientSecret)) return null;
+		String x = null;
+		DataSource dataSource;
+		try	{  
+			dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+		} catch (Exception e) { log.error("Exception locating datasources in SHRINEHubPollService.getCRCMessage: " + e); return null; }
+		try 
+		(
+			Connection conn = dataSource.getConnection();
+		)
+		{
+			PreparedStatement shrinestmt = conn.prepareStatement("exec [dbo].[getCRCResponseMessage] @queryID = ?, @previousMessageID = ?");
+			shrinestmt.setInt(1, queryID);
+			shrinestmt.setInt(2, previousMessageID);
+			int transactionTimeout = 500;
+			shrinestmt.setQueryTimeout(transactionTimeout);
+			ResultSet shrineResultSet = null;			
+			try
+			{
+				shrineResultSet = shrinestmt.executeQuery();
+				int qep_query_id = 0;
+				
+				while (shrineResultSet.next()) {
+					x = shrineResultSet.getString("x");
+				}
+				shrineResultSet.close();
+				shrinestmt.close();
+				conn.close();
+			}
+			catch (Exception e)
+			{
+				if (shrineResultSet != null) shrineResultSet.close();
+				if (shrinestmt != null) shrinestmt.close();
+				if (conn != null) conn.close();
+				
+				throw(e);
+			}
+			
+		}
+		catch(Exception v) {
+			System.out.println(v);
+		}
+		
+		return x;
 	}
 	
 	private class httpMessageResponse

@@ -40,10 +40,18 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 
 import org.owasp.esapi.ESAPI;
 import org.owasp.esapi.Logger;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import java.util.Iterator;
+
+
+import org.apache.axiom.om.OMElement;
+import org.apache.axiom.om.util.AXIOMUtil;
 
 import edu.harvard.i2b2.common.exception.I2B2DAOException;
 import edu.harvard.i2b2.common.util.db.JDBCUtil;
@@ -96,12 +104,26 @@ import edu.harvard.i2b2.crc.datavo.db.DataSourceLookup;
  */
 public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResultGenerator {
 
-	// Confinguration Values
+	// Static Confinguration Values
 	private static String qepDataLookup = "";
 	private static String keystorePassphrase = "";
 	private static String keystorePath = "";
 	private static int queryWaitTime = 60;
 	private static String shrineCellURL = "";
+	private static String clientSecret = null;
+	
+	// Represents the potential statuses of a query, this is slightly more specific than in i2b2. 
+	// No Response represents a message with no response. 
+	// Initiated represents a query that has been sent but site data has not been returned from the hub
+	// At Sites represents a query that has site data.
+	// Partial result represents a query that has results from atleast one site
+	// Finished is a query that has completed and has results from atleast one site
+	// Error represents a query that has completed and has results from zero sites. 
+	// Empty represents an empty response from the SHRINE cell, no new message received.
+	private enum queryStatus { EMPTY, RECIEVED, INITIATED, AT_SITES, PARTIAL_RESULT, FINISHED, ERROR }; 
+	
+	
+	
 	
 	private void getConfiguration(){
 		DataSource dataSource;
@@ -125,6 +147,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				if("keystorePath".equals(paramName)) keystorePath = paramValue;
 				if("queryWaitTime".equals(paramName)) queryWaitTime = Integer.parseInt(paramValue);
 				if("shrineCellURL".equals(paramName)) shrineCellURL = paramValue;
+				if("clientSecret".equals(paramName)) clientSecret = paramValue;
 			}
 			resultSet.close();
 		}
@@ -151,6 +174,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	public void generateResult(Map param) throws CRCTimeOutException,
 	I2B2DAOException {
 		
+		// Get Configuration from hive_cell_params
 		getConfiguration();
 		if ("".equals(keystorePath)) 
 		{
@@ -158,16 +182,11 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			return;
 		}
 		
-		SetFinderConnection sfConn = (SetFinderConnection) param
-				.get("SetFinderConnection");
-		SetFinderDAOFactory sfDAOFactory = (SetFinderDAOFactory) param
-				.get("SetFinderDAOFactory");
 
-		// String patientSetId = (String)param.get("PatientSetId");
+		// Read Parameters
 		String queryInstanceId = (String) param.get("QueryInstanceId");
 		String TEMP_DX_TABLE = (String) param.get("TEMP_DX_TABLE");
 		String resultInstanceId = (String) param.get("ResultInstanceId");
-		// String itemKey = (String) param.get("ItemKey"); test test 
 		String resultTypeName = (String) param.get("ResultOptionName");
 		String processTimingFlag = (String) param.get("ProcessTimingFlag");
 		int obfuscatedRecordCount = (Integer) param.get("ObfuscatedRecordCount");
@@ -175,47 +194,42 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 		int transactionTimeout = (Integer) param.get("TransactionTimeout");
 		boolean obfscDataRoleFlag = (Boolean)param.get("ObfuscatedRoleFlag");
 
-		this
-		.setDbSchemaName(sfDAOFactory.getDataSourceLookup()
-				.getFullSchema());
-		//Map ontologyKeyMap = (Map) param.get("setFinderResultOntologyKeyMap");
+		// Open Database connection.
+		SetFinderConnection sfConn = (SetFinderConnection) param
+				.get("SetFinderConnection");
+		SetFinderDAOFactory sfDAOFactory = (SetFinderDAOFactory) param
+				.get("SetFinderDAOFactory");
+				
+		this.setDbSchemaName(sfDAOFactory.getDataSourceLookup().getFullSchema());
 		String serverType = (String) param.get("ServerType");
-		//		CallOntologyUtil ontologyUtil = (CallOntologyUtil) param
-		//				.get("CallOntologyUtil");
 		List<String> roles = (List<String>) param.get("Roles");
 		String tempTableName = "";
 		PreparedStatement stmt = null;
 		boolean errorFlag = false, timeoutFlag = false;
-		//String itemKey = "";
 
-		int actualTotal = 0, obsfcTotal = 0;
 
 		try {
+			
+			// Check whether the result instance for PATIENT_COUNT_SHRINE_XML exists.
+			// If it exists, the this class has already been run for this query, so we need to return. 
+			// This occurs when the class is called for breakdowns, or if it is called multiple times
+			// as a result of being pushed to the medium queue.
+			// If the result exists, we return 
 			LogTimingUtil logTimingUtil = new LogTimingUtil();
 			logTimingUtil.setStartTime();
 
 			LogTimingUtil subLogTimingUtil = new LogTimingUtil();
 			subLogTimingUtil.setStartTime();
 			
-			int resultInstanceIDPatientCountShrineXML = 0;
 			
+			int resultInstanceIDPatientCountShrineXML = 0;
 			DataSourceLookup dataSourceLookup = sfDAOFactory.getDataSourceLookup();
 			
 			System.out.println("DataSource Type: " + dataSourceLookup.getServerType());
 			
 			PreparedStatement riipcsxstmt = sfConn.prepareStatement("select Result_Instance_ID from QT_QUERY_RESULT_INSTANCE a join QT_QUERY_RESULT_TYPE b on a.RESULT_TYPE_ID = b.RESULT_TYPE_ID and b.name = 'PATIENT_COUNT_SHRINE_XML' and QUERY_INSTANCE_ID = " + queryInstanceId);
 			riipcsxstmt.setQueryTimeout(transactionTimeout);
-
-			// NWB - Send the final query and get the results back/
-			//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-			//
-			//subLogTimingUtil.setStartTime();
 			ResultSet riipcsxResultSet = riipcsxstmt.executeQuery();
-			/*if (csr.getSqlFinishedFlag()) {
-				timeoutFlag = true;
-				throw new CRCTimeOutException("The query was canceled.");
-			}*/
 			
 			while (riipcsxResultSet.next()) {
 				resultInstanceIDPatientCountShrineXML = riipcsxResultSet.getInt("Result_Instance_ID");
@@ -227,32 +241,22 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				riipcsxstmt.close();
 				return;
 			}
-			/*
-			String riipcsxstmt1asql = "update QT_QUERY_RESULT_INSTANCE set STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'PROCESSING') where QUERY_INSTANCE_ID = " + queryInstanceId;
-			PreparedStatement riipcsxstmt1a = sfConn.prepareStatement(riipcsxstmt1asql);
-			//riipcsxstmt3.setInt(1, queryInstanceId);
-			riipcsxstmt1a.setQueryTimeout(transactionTimeout);
-			riipcsxstmt1a.executeUpdate();
-			riipcsxstmt1a.close();
-			*/
 			
+			
+			
+			// Create the record for the PATIENT_COUNT_SHRINE_XML result instance. 
 			String riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, now(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'"; //Postgres 
 			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, getdate(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'";
-			//else if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.POSTGRESQL))
-			//else if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.ORACLE)
-			
-			
+
 			PreparedStatement riipcsxstmt2 = sfConn.prepareStatement(riipcsxstmt2sql);
 			riipcsxstmt2.setQueryTimeout(transactionTimeout);
 			riipcsxstmt2.executeUpdate();
 			riipcsxstmt2.close();
 			
-			riipcsxResultSet = riipcsxstmt.executeQuery();
-			/*if (csr.getSqlFinishedFlag()) {
-				timeoutFlag = true;
-				throw new CRCTimeOutException("The query was canceled.");
-			}*/
 			
+			
+			// Rerun the query from above to get the result instance ID of the PATIENT_COUNT_SHRINE_XML instance
+			riipcsxResultSet = riipcsxstmt.executeQuery();		
 			while (riipcsxResultSet.next()) {
 				resultInstanceIDPatientCountShrineXML = riipcsxResultSet.getInt("Result_Instance_ID");
 			}
@@ -260,81 +264,50 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			riipcsxstmt.close();
 
 
-
-			
-			//PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values ?, '<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns10:i2b2_result_envelope xmlns:ns10=\"http://www.i2b2.org/xsd/hive/msg/result/1.1/\"><body><ns10:result name=\"PATIENT_COUNT_SHRINE_XML\" /><SHRINE /></body></ns10:i2b2_result_envelope>'");
-			//PreparedStatement riipcsxstmt3 = sfConn.prepareStatement("insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) values (?, '')");
-			
+			// Create placeholder Result XML for each result instance.
+			// This is needed because the default value used by i2b2 when there is no result instance causes issues in the webclient
 			String riipcsxstmt3sql = "insert into QT_XML_RESULT (RESULT_INSTANCE_ID, XML_VALUE) select a.RESULT_INSTANCE_ID, '<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns10:i2b2_result_envelope><body><ns10:result name=\"' || c.NAME || '\"></ns10:result></body></ns10:i2b2_result_envelope>'  From QT_QUERY_RESULT_INSTANCE a left join QT_XML_RESULT b on a.RESULT_INSTANCE_ID = b.RESULT_INSTANCE_ID join QT_QUERY_RESULT_TYPE c on a.RESULT_TYPE_ID = c.RESULT_TYPE_ID where QUERY_INSTANCE_ID = " + queryInstanceId + " and b.RESULT_INSTANCE_ID is null";
 			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt3sql = riipcsxstmt3sql.replace("||", "+");
 			PreparedStatement riipcsxstmt3 = sfConn.prepareStatement(riipcsxstmt3sql);
-			//riipcsxstmt3.setInt(1, queryInstanceId);
 			riipcsxstmt3.setQueryTimeout(transactionTimeout);
 			riipcsxstmt3.executeUpdate();
 			riipcsxstmt3.close();
-			
-			System.out.println("Result Instance ID: " + resultInstanceIDPatientCountShrineXML);
-			
 
-			//String itemCountSql = getItemKeyFromResultType(sfDAOFactory, resultTypeName);
 
-			//get break down count sigma from property file 
-
-			double breakdownCountSigma = GaussianBoxMuller.getBreakdownCountSigma();
-			double obfuscatedMinimumValue = GaussianBoxMuller.getObfuscatedMinimumVal();
-
-			ResultType resultType = new ResultType();
-			resultType.setName(resultTypeName);
-			//stmt = sfConn.prepareStatement(itemCountSql);
-
-			CancelStatementRunner csr = new CancelStatementRunner(stmt,
-					transactionTimeout);
-			Thread csrThread = new Thread(csr);
-			csrThread.start();
-			
+			// Get the i2b2 request XML
 			stmt = sfConn.prepareStatement("select a.query_master_id, request_xml, i2b2_request_xml from QT_QUERY_INSTANCE a join QT_QUERY_MASTER b on a.query_master_id = b.query_master_id and query_instance_id = " + queryInstanceId);
 			stmt.setQueryTimeout(transactionTimeout);
-			
-			subLogTimingUtil.setStartTime();
 			ResultSet resultSet = stmt.executeQuery();
-			if (csr.getSqlFinishedFlag()) {
-				timeoutFlag = true;
-				throw new CRCTimeOutException("The query was canceled.");
-			}
 			int queryMasterId = -1;
 			String requestXML = "";
-			String i2b2RequestXML = "";
-			
+			String i2b2RequestXML = "";			
 			while (resultSet.next()) {
 				queryMasterId = resultSet.getInt("query_master_id");
 				requestXML = resultSet.getString("request_xml");
 				i2b2RequestXML = resultSet.getString("i2b2_request_xml");
 			}
-
-			csr.setSqlFinishedFlag();
-			csrThread.interrupt();
 			stmt.close();
-
+			// Hack to allow sql server to parse the XML.
 			i2b2RequestXML = i2b2RequestXML.replace("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>", "");
-
+			
+			// Send a get request for QEP details to the hub. For some reason the first request made to the hub often fails, so this unnecessary request hides that issue.
 			httpMessageResponse response = get(qepDataLookup);			
 
-				String dataSourceName = "SHRINEDemoDS";
-				DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
-				Connection conn = dataSource.getConnection();
-				PreparedStatement shrinestmt = conn.prepareStatement("EXEC [dbo].[SHRINE_CREATE_QUERY] @QueryMasterID=?, @x=?, @ix = ?");
-				shrinestmt.setInt(1, queryMasterId);
-				shrinestmt.setString(2, requestXML);
-				shrinestmt.setString(3, i2b2RequestXML);
-				//int transactionTimeout = 500;
-				shrinestmt.setQueryTimeout(transactionTimeout);
 
-				// NWB - Send the final query and get the results back/
-				//logesapi.debug(null,"Executing count sql [" + sqls[count] + "]");
-
-				//
-			ResultSet shrineResultSet = null;
-			
+			// Create and send the SHRINE request. 
+			// Currently this is implemented in the database, it should be moved to java code
+			// but this will be much easier when java is updated in future versions of i2b2.
+			String dataSourceName = "SHRINEDemoDS";
+			DataSource dataSource = ServiceLocator.getInstance().getAppServerDataSource(dataSourceName);
+			Connection conn = dataSource.getConnection();
+			PreparedStatement shrinestmt = conn.prepareStatement("EXEC [dbo].[SHRINE_CREATE_QUERY] @QueryMasterID=?, @x=?, @ix = ?");
+			shrinestmt.setInt(1, queryMasterId);
+			shrinestmt.setString(2, requestXML);
+			shrinestmt.setString(3, i2b2RequestXML);
+			//int transactionTimeout = 500;
+			shrinestmt.setQueryTimeout(transactionTimeout);
+			ResultSet shrineResultSet = null;		
+			int qep_query_id = -1;
 			try
 			{
 				subLogTimingUtil.setStartTime();
@@ -343,7 +316,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 					timeoutFlag = true;
 					throw new CRCTimeOutException("The query was canceled.");
 				}*/
-				int qep_query_id = 0;
+				
 				
 				while (shrineResultSet.next()) {
 					String hub_url = shrineResultSet.getString("hub_url");
@@ -363,99 +336,31 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 				
 				throw(e);
 			}	
-/*		
-			for(int i = 0; i < 3; i++){
-				DataType mdataType = new DataType();
-				mdataType.setValue(String.valueOf(i * 10));
-				mdataType.setColumn("column_" + i);
-				mdataType.setType("int");
-				resultType.getData().add(mdataType);
-			}
-			//Thread.sleep(10000);
-*/			
-			//NWB - Start Processing results
-/*
-			for(int i = 0; i < 50; i++)
-			{
-				Thread.sleep(200);
-				stmt = sfConn.prepareStatement("exec [dbo].[SHRINE_POLL_RESULT_STATUS] @queryID=" + qep_query_id);
-				stmt.setQueryTimeout(transactionTimeout);	
-				subLogTimingUtil.setStartTime();
-				resultSet = stmt.executeQuery();
-				if (csr.getSqlFinishedFlag()) {
-					timeoutFlag = true;
-					throw new CRCTimeOutException("The query was canceled.");
-				}
-				String resultstatus = "EMPTY";
-				while (resultSet.next()) {
-					resultstatus = resultSet.getString("status");
-					if("FINISHED".equals(resultstatus))
-					{
-						int demoCount = resultSet.getInt("count");
-						subLogTimingUtil.setEndTime();
-						actualTotal += demoCount;
-						DataType mdataType = new DataType();
-
-						String rangeCd = resultSet.getString("adapterNodeName");
-
-						mdataType.setValue(String.valueOf(demoCount));
-						mdataType.setColumn(rangeCd);
-						mdataType.setType("int");
-						resultType.getData().add(mdataType);
-					}
-				}
-
-				if("FINISHED".equals(resultstatus) || "ERROR".equals(resultstatus)) break; 
-			}
-*/
+			
+			
 
 			//Start the SHRINE listener
-			postToSHRINECell();
-/*
-			edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory of = new edu.harvard.i2b2.crc.datavo.i2b2result.ObjectFactory();
-			BodyType bodyType = new BodyType();
-			bodyType.getAny().add(of.createResult(resultType));
-			ResultEnvelopeType resultEnvelop = new ResultEnvelopeType();
-			resultEnvelop.setBody(bodyType);
-
-			JAXBUtil jaxbUtil = CRCJAXBUtil.getJAXBUtil();
-
-			StringWriter strWriter = new StringWriter();
-			subLogTimingUtil.setStartTime();
-			jaxbUtil.marshaller(of.createI2B2ResultEnvelope(resultEnvelop),
-					strWriter);
-			subLogTimingUtil.setEndTime();
-			//tm.begin();
-			IXmlResultDao xmlResultDao = sfDAOFactory.getXmlResultDao();
-			xmlResult = strWriter.toString();
-			if (resultInstanceId != null)
-				xmlResultDao.createQueryXmlResult(resultInstanceId, strWriter
-						.toString());
-			//
-			if (processTimingFlag != null) {
-				if (!processTimingFlag.trim().equalsIgnoreCase(ProcessTimingReportUtil.NONE) ) {
-					ProcessTimingReportUtil ptrUtil = new ProcessTimingReportUtil(sfDAOFactory.getDataSourceLookup());
-					if (processTimingFlag.trim().equalsIgnoreCase(ProcessTimingReportUtil.DEBUG) ) {
-						ptrUtil.logProcessTimingMessage(queryInstanceId, ptrUtil.buildProcessTiming(subLogTimingUtil, "JAXB - " + resultTypeName , ""));
+			//postToSHRINECell();
+			//pollSHRINECellForUpdates(qep_query_id, 0, clientSecret);
+			int previous_message_id = 0;
+			int maxPolls = 12;
+			for (int i = 0; i < maxPolls; i++)
+			{
+				ResultInstanceUpdate messageResults = getUpdateFromSHRINECell(qep_query_id, previous_message_id, clientSecret, log);
+				if (messageResults.messageID > 0) previous_message_id = messageResults.messageID;
+				for(ResultInstanceUpdateResult r: messageResults.results)
+				{
+					if (r.status.compareTo(queryStatus.AT_SITES) >= 0)
+					{
+						i = maxPolls;
 					}
-					logTimingUtil.setEndTime();
-					ptrUtil.logProcessTimingMessage(queryInstanceId, ptrUtil.buildProcessTiming(logTimingUtil, "BUILD - " + resultTypeName , ""));
+					
 				}
 			}
-			//tm.commit();
-*/
 			/*****
 			We could add polling for query completion here. That would introduce some unnecessary database transactions, but free up the thread quicker.
 			*****/
-			/*
-			Thread.sleep(1000 * queryWaitTime); //debugging timeout		
-			String riipcsxstmt1asql = "update QT_QUERY_INSTANCE set STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = 'MEDIUM_QUEUE'), BATCH_MODE = 'MEDIUM_QUEUE' where QUERY_INSTANCE_ID = " + queryInstanceId;// + " and BATCH_MODE = 'RUNNING'";
-			PreparedStatement riipcsxstmt1a = sfConn.prepareStatement(riipcsxstmt1asql);
-			//riipcsxstmt3.setInt(1, queryInstanceId);
-			riipcsxstmt1a.setQueryTimeout(transactionTimeout);
-			riipcsxstmt1a.executeUpdate();
-			riipcsxstmt1a.close();
-			*/
+
 			
 		} catch (SQLException sqlEx) {
 			// catch oracle query timeout error ORA-01013
@@ -641,7 +546,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 	public static void postToSHRINECell(){
 		try{
 			String apiurl = shrineCellURL + "/startListener";
-			String payload = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns6:request xmlns:ns4=\"http://www.i2b2.org/xsd/cell/crc/psm/1.1/\" xmlns:ns7=\"http://www.i2b2.org/xsd/cell/crc/psm/querydefinition/1.1/\" xmlns:ns3=\"http://www.i2b2.org/xsd/cell/crc/pdo/1.1/\" xmlns:ns5=\"http://www.i2b2.org/xsd/hive/plugin/\" xmlns:ns2=\"http://www.i2b2.org/xsd/hive/pdo/1.1/\" xmlns:ns6=\"http://www.i2b2.org/xsd/hive/msg/1.1/\"><message_header><proxy><redirect_url>http://localhost:9090/i2b2/services/SHRINEQEPService/helloWorld</redirect_url></proxy></message_header></ns6:request>";
+			String payload = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns6:request xmlns:ns4=\"http://www.i2b2.org/xsd/cell/crc/psm/1.1/\" xmlns:ns7=\"http://www.i2b2.org/xsd/cell/crc/psm/querydefinition/1.1/\" xmlns:ns3=\"http://www.i2b2.org/xsd/cell/crc/pdo/1.1/\" xmlns:ns5=\"http://www.i2b2.org/xsd/hive/plugin/\" xmlns:ns2=\"http://www.i2b2.org/xsd/hive/pdo/1.1/\" xmlns:ns6=\"http://www.i2b2.org/xsd/hive/msg/1.1/\"><message_header><proxy><redirect_url>http://localhost:9090/i2b2/services/SHRINEQEPService/startListener</redirect_url></proxy></message_header></ns6:request>";
 			
 			URL url = new URL(apiurl);
 			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -661,20 +566,115 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			System.out.println("Failed successfully");
 		}
 	}
-/*
-	private String getItemKeyFromResultType(SetFinderDAOFactory sfDAOFactory,
-			String resultTypeKey) {
-		//
-		IQueryBreakdownTypeDao queryBreakdownTypeDao = sfDAOFactory
-				.getQueryBreakdownTypeDao();
-		QtQueryBreakdownType queryBreakdownType = queryBreakdownTypeDao
-				.getBreakdownTypeByName(resultTypeKey);
-		String itemKey = queryBreakdownType.getValue();
-		return itemKey;
-	}
-*/
 
-		private class httpMessageResponse
+	private static ResultInstanceUpdate getUpdateFromSHRINECell(int queryID, int previousMessageID, String _clientSecret, Log _log)
+	{
+		ResultInstanceUpdate riu = new ResultInstanceUpdate();
+		List<ResultInstanceUpdateResult> results = new ArrayList<>();
+		httpMessageResponse response = pollSHRINECellForUpdates(queryID, previousMessageID, _clientSecret);
+		if (response.statusCode != 200) return riu;
+		
+		OMElement x;
+		try
+		{
+			x = AXIOMUtil.stringToOM(response.message);
+			Iterator<OMElement> it = x.getChildElements();
+			while (it.hasNext())
+			{
+				OMElement next = it.next();
+				if("message_body".equals(next.getLocalName()))
+				{
+					Iterator<OMElement> it1 = next.getChildElements();
+					while (it1.hasNext())
+					{
+						OMElement next1 = it1.next();
+						if("query_id".equals(next1.getLocalName())) riu.queryID = Integer.parseInt(next1.getText());
+						if("message_id".equals(next1.getLocalName())) riu.messageID = Integer.parseInt(next1.getText());
+						if("results".equals(next1.getLocalName())) 
+						{
+							Iterator<OMElement> it2 = next1.getChildElements();
+							while (it2.hasNext())
+							{
+								OMElement next2 = it2.next();
+								
+								if("result".equals(next2.getLocalName()))
+								{
+									
+									String result_type = "";
+									int set_size = -1;
+									String status = "";
+									String xml_value = "";
+									Iterator<OMElement> it3 = next2.getChildElements();
+									while (it3.hasNext())
+									{
+										OMElement next3 = it3.next();
+										if("result_type".equals(next3.getLocalName())) result_type = next3.getText();
+										if("set_size".equals(next3.getLocalName())) set_size = Integer.parseInt(next3.getText());
+										if("status".equals(next3.getLocalName())) status = (next3.getText());
+										if("xml_value".equals(next3.getLocalName())) xml_value = (next3.getText());
+									}
+									results.add(new ResultInstanceUpdateResult(result_type, set_size, status, xml_value));
+								}
+								
+							}
+						}
+						_log.error("getUpdateFromSHRINECell received message: " + queryID + "  :  " +  previousMessageID);
+					}
+				}
+				
+			}
+			
+			
+		}
+		catch (Exception e)
+		{
+			 _log.error("Exception converting responce to OMElement  in QueryResultSHRINEBreakdownGenerator.getUpdateFromSHRINECell: " + e + "  :  " + response.message); return riu; 
+		}
+		riu.results = results;
+		return riu;
+	}
+
+	public static httpMessageResponse pollSHRINECellForUpdates(int queryID, int previousMessageID, String _clientSecret){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			String apiurl = shrineCellURL + "/getCRCMessage";
+			String payload = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><ns6:request xmlns:ns4=\"http://www.i2b2.org/xsd/cell/crc/psm/1.1/\" xmlns:ns7=\"http://www.i2b2.org/xsd/cell/crc/psm/querydefinition/1.1/\" xmlns:ns3=\"http://www.i2b2.org/xsd/cell/crc/pdo/1.1/\" xmlns:ns5=\"http://www.i2b2.org/xsd/hive/plugin/\" xmlns:ns2=\"http://www.i2b2.org/xsd/hive/pdo/1.1/\" xmlns:ns6=\"http://www.i2b2.org/xsd/hive/msg/1.1/\"><message_header><proxy><redirect_url>http://localhost:9090/i2b2/services/SHRINEQEPService/startListener</redirect_url></proxy></message_header><message_body><query_id>" + queryID + "</query_id><previous_message_id>" + previousMessageID + "</previous_message_id><client_secret>" + _clientSecret + "</client_secret></message_body></ns6:request>";
+			
+			System.out.println(payload);
+			
+			
+			URL url = new URL(apiurl);
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod("POST");
+			connection.setDoOutput(true);
+			connection.setRequestProperty("Content-Type","text/xml");
+			connection.setRequestProperty("Accept", "text/xml");
+			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
+			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
+			
+			byte[] out = payload.getBytes(StandardCharsets.UTF_8);
+			OutputStream stream = connection.getOutputStream();
+			stream.write(out);
+			
+			InputStream inputStream = connection.getInputStream();
+			String text = new BufferedReader(
+			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+				.lines()
+				.collect(Collectors.joining("\n"));
+			response.update(connection.getResponseCode(), text);
+			connection.disconnect();
+			
+			//System.out.println("pollSHRINECellForUpdates" + text);
+			
+			//OMElement x = AXIOMUtil.stringToOM(
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("Failed successfully");
+		}
+		return response;
+	}
+
+	private static class httpMessageResponse
 	{
 		public httpMessageResponse()
 		{
@@ -690,6 +690,36 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 		
 		public int statusCode;
 		public String message;
+	}
+	
+	private static class ResultInstanceUpdate
+	{
+		public List<ResultInstanceUpdateResult> results;
+		public int queryID = -1;
+		public int messageID = -1;
+	}		
+	
+	private static class ResultInstanceUpdateResult
+	{
+		public String result_type;
+		public int set_size;
+		public queryStatus status = queryStatus.EMPTY;
+		public String xml_value;
+		
+		public ResultInstanceUpdateResult(String _result_type, int _set_size, String _status, String _xml_value)
+		{
+			result_type = _result_type;
+			set_size = _set_size;
+			xml_value = _xml_value.replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&");
+			if (_status.equals("PROCESSING"))
+			{
+				if (xml_value.contains("site name=\"")) status = queryStatus.AT_SITES;
+				else status = queryStatus.INITIATED;
+			}
+			else if (_status.equals("FINISHED")) status = queryStatus.FINISHED;
+			else if (_status.equals("ERROR")) status = queryStatus.ERROR;
+			else  status = queryStatus.EMPTY;
+		}
 	}
 
 }
