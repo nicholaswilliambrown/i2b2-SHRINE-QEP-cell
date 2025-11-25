@@ -106,11 +106,8 @@ public class SHRINEQEPService {
 				x = SHRINEHubPollService.getCRCMessage(queryID, previousMessageID, clientSecret);
 				if (x != null) break;
 			}
-			else
-			{
-				try{Thread.sleep(50);}
-				catch(Exception e) {}
-			}
+			try{Thread.sleep(50);}
+			catch(Exception e) {}
 		}
 		
 		OMElement returnElement;

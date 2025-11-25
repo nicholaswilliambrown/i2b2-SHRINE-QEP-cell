@@ -71,6 +71,7 @@ import edu.harvard.i2b2.crc.util.LogTimingUtil;
 
 import java.net.URL;
 import java.net.HttpURLConnection;
+import java.net.URLConnection;
 import javax.net.ssl.HttpsURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.io.OutputStream;
@@ -343,7 +344,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			//postToSHRINECell();
 			//pollSHRINECellForUpdates(qep_query_id, 0, clientSecret);
 			int previous_message_id = 0;
-			int maxPolls = 12;
+			int maxPolls = 120;
 			for (int i = 0; i < maxPolls; i++)
 			{
 				ResultInstanceUpdate messageResults = getUpdateFromSHRINECell(qep_query_id, previous_message_id, clientSecret, log);
@@ -453,20 +454,32 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 
 	}
 
-
-	public static void sendRequest(String apiurl, String payload){
-		try{
+	public static HttpURLConnection getConnection(String apiurl, String requestMethod)
+	{
+		if(apiurl.startsWith("https://"))
+		{
+			return getHttpsConnection(apiurl, requestMethod);
+		}
+		else
+		{
+			return getHttpConnection(apiurl, requestMethod);
+		}
+	}
+	
+	public static HttpURLConnection getHttpsConnection(String apiurl, String requestMethod)
+	{
+		HttpsURLConnection connection = null;
+		try(InputStream ksStream = new FileInputStream(keystorePath);)
+		{
 			URL url = new URL(apiurl);
-			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
-			connection.setRequestMethod("PUT");
+			connection = (HttpsURLConnection) url.openConnection();
+			connection.setRequestMethod(requestMethod);
 			connection.setDoOutput(true);
 			connection.setRequestProperty("Content-Type","application/json");
 			connection.setRequestProperty("Accept", "application/json");
-			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 1");
 			
 			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 			ksStream.close();
 
@@ -480,7 +493,87 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
 			
-			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 2");
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS connection");
+		}
+		return connection;
+	}
+	
+		public static HttpURLConnection getHttpConnection(String apiurl, String requestMethod)
+	{
+		try(InputStream ksStream = new FileInputStream(keystorePath);)
+		{
+			URL url = new URL(apiurl);
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod(requestMethod);
+			connection.setDoOutput(true);
+			connection.setRequestProperty("Content-Type","application/json");
+			connection.setRequestProperty("Accept", "application/json");
+			
+			return connection;
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS connection");
+			return null;
+		}
+	}
+
+
+	public static void sendRequest(String apiurl, String payload){
+		try{
+			HttpURLConnection connection = getConnection(apiurl, "PUT");
+			
+			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
+			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
+			byte[] out = payload.getBytes(StandardCharsets.UTF_8);
+			OutputStream stream = connection.getOutputStream();
+			stream.write(out);
+			System.out.println(connection.getResponseCode() + " " + connection.getResponseMessage()); // THis is optional
+			connection.disconnect();
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest Failed");
+		}
+	}
+	
+	
+		public httpMessageResponse get(String apiurl){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			HttpURLConnection connection = getConnection(apiurl, "GET");
+
+			InputStream inputStream = connection.getInputStream();
+			String text = new BufferedReader(
+			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+				.lines()
+				.collect(Collectors.joining("\n"));
+			//System.out.println(text);
+			response.update(connection.getResponseCode(), text);
+			//System.out.println(response.statusCode + " " + response.message); // THis is optional
+			connection.disconnect();
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("QueryResultSHRINEBreakdownGenerator get Failed");
+		}
+		return response;
+	}
+	
+	/****************************************
+	*                                       *
+	* HTTP versions of SHRINE communication *
+	* uncomment for testing use only        *
+	*                                       *
+	****************************************/
+/*	public static void sendRequest(String apiurl, String payload){
+		try{
+			URL url = new URL(apiurl);
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod("PUT");
+			connection.setDoOutput(true);
+			connection.setRequestProperty("Content-Type","application/json");
+			connection.setRequestProperty("Accept", "application/json");
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 1");
 			
 			//connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((userName + ":" + password).getBytes()));
 			//String payload = "{\"sampleKey\":\"sampleValue\"}";// This should be your json body i.e. {"Name" : "Mohsin"} 
@@ -494,7 +587,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest 5");
 		}catch (Exception e){
 			System.out.println(e);
-			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest Failed successfully");
+			System.out.println("QueryResultSHRINEBreakdownGenerator sendRequest Failed successfully, URL: " + apiurl + " payload: " + payload);
 		}
 	}
 	
@@ -504,27 +597,11 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 		try{
 			System.out.println(apiurl);
 			URL url = new URL(apiurl);
-			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("GET");
 			connection.setConnectTimeout(5000);
 			connection.setReadTimeout(5000);
 			connection.setRequestProperty("Accept", "application/json");
-			
-			char[] passphrase = keystorePassphrase.toCharArray();
-			KeyStore ks = KeyStore.getInstance("PKCS12");
-			InputStream ksStream = new FileInputStream(keystorePath);
-			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
-			ksStream.close();
-			
-			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
-			kmf.init(ks, passphrase);
-
-			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
-			tmf.init(ks);
-
-			SSLContext sslContext = SSLContext.getInstance("TLS");
-			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
-			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
 
 			InputStream inputStream = connection.getInputStream();
 			String text = new BufferedReader(
@@ -541,7 +618,8 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 		}
 		return response;
 	}
-	
+*/
+
 	
 	public static void postToSHRINECell(){
 		try{
@@ -559,7 +637,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			byte[] out = payload.getBytes(StandardCharsets.UTF_8);
 			OutputStream stream = connection.getOutputStream();
 			stream.write(out);
-			System.out.println(connection.getResponseCode() + " " + connection.getResponseMessage()); // THis is optional
+			//System.out.println(connection.getResponseCode() + " " + connection.getResponseMessage()); // THis is optional
 			connection.disconnect();
 		}catch (Exception e){
 			System.out.println(e);
@@ -618,7 +696,7 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 								
 							}
 						}
-						_log.error("getUpdateFromSHRINECell received message: " + queryID + "  :  " +  previousMessageID);
+						//_log.error("getUpdateFromSHRINECell received message: " + queryID + "  :  " +  previousMessageID);
 					}
 				}
 				

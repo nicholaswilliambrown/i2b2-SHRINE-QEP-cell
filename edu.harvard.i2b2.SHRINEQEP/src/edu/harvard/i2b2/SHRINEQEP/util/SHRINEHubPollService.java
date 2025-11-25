@@ -162,17 +162,19 @@ public class SHRINEHubPollService {
 					String crcStmt4Sql = "select XML_RESULT_ID from QT_XML_RESULT where Result_instance_ID = ?"; // Get XML Result ID
 					String crcStmt5Sql = "update QT_XML_RESULT set XML_VALUE = ? where XML_RESULT_ID = ?"; // Update QT_XML_RESULT if record already exists
 					String crcStmt6Sql = "insert into QT_XML_RESULT(Result_Instance_ID, XML_Value) values (?, ?)"; // Insert into QT_XML_RESULT if no record 
-					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = ?, STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = ?) where QUERY_MASTER_ID = ?"; // 
+					String crcStmt7Sql = "update QT_QUERY_INSTANCE set BATCH_MODE = ?, STATUS_TYPE_ID = (select STATUS_TYPE_ID from QT_QUERY_STATUS_TYPE where NAME = ?), END_DATE = CURRENT_TIMESTAMP where QUERY_MASTER_ID = ?"; // 
 					
 					if ("SQLSERVER".equals(crcDatabaseType))
 					{
-						crcStmt2Sql ="update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?";
-						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select query_instance_id, Result_Type_ID, getDate(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
+						//crcStmt2Sql ="update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID, END_DATE = CURRENT_TIMESTAMP from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name = ? join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?";
+						crcStmt2Sql ="update b set b.SET_SIZE = ?, b.REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID, END_DATE = CURRENT_TIMESTAMP from  QT_QUERY_RESULT_INSTANCE b join QT_QUERY_RESULT_TYPE c on b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and c.Name like '%_SHRINE_XML' join QT_QUERY_Instance d on b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID and d.QUERY_MASTER_ID = ? join QT_QUERY_STATUS_TYPE e on e.NAME = ?";
+						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, END_DATE, STATUS_TYPE_ID, DELETE_FLAG) select query_instance_id, Result_Type_ID, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, b.STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
 					}
 					else if ("POSTGRES".equals(crcDatabaseType))
 					{
-						crcStmt2Sql = "update QT_QUERY_RESULT_INSTANCE b set SET_SIZE = ?, REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID from  QT_QUERY_STATUS_TYPE e	join QT_QUERY_RESULT_TYPE c on c.Name = ? join QT_QUERY_Instance d on d.QUERY_MASTER_ID = ? where e.NAME = ? and b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID";
-						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select c.query_instance_id, a.Result_Type_ID, now(), b.STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
+						//crcStmt2Sql = "";update QT_QUERY_RESULT_INSTANCE b set SET_SIZE = ?, REAL_SET_SIZE = ?, STATUS_TYPE_ID = e.STATUS_TYPE_ID, END_DATE = CURRENT_TIMESTAMP from  QT_QUERY_STATUS_TYPE e	join QT_QUERY_RESULT_TYPE c on c.Name = ? join QT_QUERY_Instance d on d.QUERY_MASTER_ID = ? where e.NAME = ? and b.RESULT_TYPE_ID = c.RESULT_TYPE_ID and b.QUERY_INSTANCE_ID = d.QUERY_INSTANCE_ID";
+						crcStmt2Sql = ""; // TODO: update Postgres version of query to match SQL Server version.
+						crcStmt3Sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, END_DATE, STATUS_TYPE_ID, DELETE_FLAG) select c.query_instance_id, a.Result_Type_ID, now(), now() b.STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = ? and b.Name = 'PROCESSING' join QT_QUERY_INSTANCE c on c.Query_master_ID = ?";
 					}
 
 					
@@ -202,8 +204,10 @@ public class SHRINEHubPollService {
 						{
 							lastPoll = Instant.now();
 							httpMessageResponse response = get(hubURL + "/mom/receiveMessage/" + qepQueueName + "?timeOutSeconds=5");
-
-							System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
+							if (response.statusCode != 204)
+							{
+								System.out.println("SHRINE POLL Response: " + response.statusCode + ":" + response.message);
+							}
 							if (response.statusCode == 200)
 							{
 								stmt.setInt(1, response.statusCode);
@@ -220,6 +224,8 @@ public class SHRINEHubPollService {
 									int messageID = resultSet.getInt("messageID");
 									
 									try{
+										
+										// Lookup Result Instance ID
 										if (!"empty".equals(deliveryAttemptID) && !"-1".equals(deliveryAttemptID))
 										{
 											crcStmt.setInt(1, queryID);
@@ -230,6 +236,7 @@ public class SHRINEHubPollService {
 												resultInstanceID = crcResultSet.getInt("RESULT_INSTANCE_ID");
 											}
 											crcResultSet.close();
+											//Create Record in QT_QUERY_RESULT_INSTANCE if one does not exist
 											if (resultInstanceID == 0){
 												crcStmt3.setInt(2, queryID);
 												crcStmt3.setString(1, resultType);
@@ -241,14 +248,15 @@ public class SHRINEHubPollService {
 												}
 												crcResultSet.close();
 											}
-											
+/*											
 											crcStmt2.setInt(1, setSize);
 											crcStmt2.setInt(2, setSize);
 											crcStmt2.setString(3, resultType);
 											crcStmt2.setInt(4, queryID);
 											crcStmt2.setString(5, status);
 											crcStmt2.executeUpdate();
-											
+*/											
+											// Lookup XML Result ID
 											crcStmt4.setInt(1, resultInstanceID);
 											int xmlResultID = 0;
 											crcResultSet = crcStmt4.executeQuery();
@@ -256,12 +264,14 @@ public class SHRINEHubPollService {
 												xmlResultID = crcResultSet.getInt("XML_RESULT_ID");
 											}
 											crcResultSet.close();
+											// Insert or update QT_XML_RESULT record
 											if (xmlResultID > 0){
 												crcStmt5.setString(1, x);
 												crcStmt5.setInt(2, xmlResultID);
 												crcStmt5.executeUpdate();
 											}
 											else {
+												log.info("crcStmt6, resultInstanceID: " + resultInstanceID + "\n");
 												crcStmt6.setInt(1, resultInstanceID);
 												crcStmt6.setString(2, x);
 												crcStmt6.executeUpdate();
@@ -271,30 +281,35 @@ public class SHRINEHubPollService {
 											{
 												latestMessage = messageID;
 												firstLoop = false;
+												
+												// Update QT_QUERY_RESULT_INSTANCE for all SHRINE result instances on this query.
+												crcStmt2.setInt(1, setSize);
+												crcStmt2.setInt(2, setSize);
+												//crcStmt2.setString(3, resultType);
+												crcStmt2.setInt(3, queryID);
+												crcStmt2.setString(4, status);
+												crcStmt2.executeUpdate();
+												
+
 												if ("PROCESSING".equals(status))
 												{
 													crcStmt7.setString(1, "RUNNING");
 													crcStmt7.setString(2, "PROCESSING");
-													crcStmt7.setInt(3, queryID);
-													//crcStmt7.setString(2, x);
-													crcStmt7.executeUpdate();
 												}
-												if ("FINISHED".equals(status))
+												else if ("FINISHED".equals(status))
 												{
 													crcStmt7.setString(1, "FINISHED");
 													crcStmt7.setString(2, "FINISHED");
-													crcStmt7.setInt(3, queryID);
-													//crcStmt7.setString(2, x);
-													crcStmt7.executeUpdate();
 												}
-												if ("ERROR".equals(status))
+												else //if ("ERROR".equals(status))
 												{
 													crcStmt7.setString(1, "ERROR");
 													crcStmt7.setString(2, "ERROR");
-													crcStmt7.setInt(3, queryID);
-													//crcStmt7.setString(2, x);
-													crcStmt7.executeUpdate();
+
 												}
+												crcStmt7.setInt(3, queryID);
+												//crcStmt7.setString(2, x);
+												crcStmt7.executeUpdate();
 											}
 											firstLoop = false;
 										}
@@ -338,24 +353,35 @@ public class SHRINEHubPollService {
 		return lastPoll.plusMillis(pollInterval).compareTo(Instant.now()) >= 0;
 	}
 
-
-	public httpMessageResponse get(String apiurl){
-		httpMessageResponse response = new httpMessageResponse();
-		try{
-			System.out.println(apiurl);
+	public static HttpURLConnection getConnection(String apiurl, String requestMethod)
+	{
+		if(apiurl.startsWith("https://"))
+		{
+			return getHttpsConnection(apiurl, requestMethod);
+		}
+		else
+		{
+			return getHttpConnection(apiurl, requestMethod);
+		}
+	}
+	
+	public static HttpURLConnection getHttpsConnection(String apiurl, String requestMethod)
+	{
+		HttpsURLConnection connection = null;
+		try(InputStream ksStream = new FileInputStream(keystorePath);)
+		{
 			URL url = new URL(apiurl);
-			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
-			connection.setRequestMethod("GET");
-			connection.setConnectTimeout(pollInterval * 2);
-			connection.setReadTimeout(pollInterval * 2);
+			connection = (HttpsURLConnection) url.openConnection();
+			connection.setRequestMethod(requestMethod);
+			connection.setDoOutput(true);
+			connection.setRequestProperty("Content-Type","application/json");
 			connection.setRequestProperty("Accept", "application/json");
 			
 			char[] passphrase = keystorePassphrase.toCharArray();
 			KeyStore ks = KeyStore.getInstance("PKCS12");
-			InputStream ksStream = new FileInputStream(keystorePath);
 			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
 			ksStream.close();
-			
+
 			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
 			kmf.init(ks, passphrase);
 
@@ -365,6 +391,90 @@ public class SHRINEHubPollService {
 			SSLContext sslContext = SSLContext.getInstance("TLS");
 			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+			
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS connection");
+		}
+		return connection;
+	}
+	
+		public static HttpURLConnection getHttpConnection(String apiurl, String requestMethod)
+	{
+		try(InputStream ksStream = new FileInputStream(keystorePath);)
+		{
+			URL url = new URL(apiurl);
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod(requestMethod);
+			connection.setDoOutput(true);
+			connection.setRequestProperty("Content-Type","application/json");
+			connection.setRequestProperty("Accept", "application/json");
+			
+			return connection;
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("Failed to create HTTPS connection");
+			return null;
+		}
+	}
+
+
+
+	public httpMessageResponse get(String apiurl){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			System.out.println("SHRINE HUB POLL SERVICE get: " + apiurl);
+			HttpURLConnection connection = getConnection(apiurl, "GET");
+			InputStream inputStream = connection.getInputStream();
+			String text = new BufferedReader(
+			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+				.lines()
+				.collect(Collectors.joining("\n"));
+			response.update(connection.getResponseCode(), text);
+			connection.disconnect();
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("SHRINE HUB POLL SERVICE get Failed successfully");
+		}
+		return response;
+	}
+	
+	public httpMessageResponse put(String apiurl){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			System.out.println("SHRINE HUB POLL SERVICE put");
+			HttpURLConnection connection = getConnection(apiurl, "PUT");
+			InputStream inputStream = connection.getInputStream();
+			String text = new BufferedReader(
+			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
+				.lines()
+				.collect(Collectors.joining("\n"));
+			response.update(connection.getResponseCode(), text);
+			connection.disconnect();
+		}catch (Exception e){
+			System.out.println(e);
+			System.out.println("SHRINE HUB POLL SERVICE put Failed successfully");
+		}
+		return response;
+	}
+
+
+	/****************************************
+	*                                       *
+	* HTTP versions of SHRINE communication *
+	* uncomment for testing use only        *
+	*                                       *
+	****************************************/
+/*	public httpMessageResponse get(String apiurl){
+		httpMessageResponse response = new httpMessageResponse();
+		try{
+			//System.out.println(apiurl);
+			URL url = new URL(apiurl);
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestMethod("GET");
+			connection.setConnectTimeout(pollInterval * 2);
+			connection.setReadTimeout(pollInterval * 2);
+			connection.setRequestProperty("Accept", "application/json");			
 
 			InputStream inputStream = connection.getInputStream();
 			String text = new BufferedReader(
@@ -384,27 +494,12 @@ public class SHRINEHubPollService {
 		httpMessageResponse response = new httpMessageResponse();
 		try{
 			URL url = new URL(apiurl);
-			HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("PUT");
 			connection.setConnectTimeout(pollInterval * 2);
 			connection.setReadTimeout(pollInterval * 2);
 			connection.setRequestProperty("Accept", "application/json");
 			
-			char[] passphrase = keystorePassphrase.toCharArray();
-			KeyStore ks = KeyStore.getInstance("PKCS12");
-			InputStream ksStream = new FileInputStream(keystorePath);
-			ks.load(ksStream, passphrase); // i is an InputStream reading the keystore
-
-			KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
-			kmf.init(ks, passphrase);
-
-			TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
-			tmf.init(ks);
-
-			SSLContext sslContext = SSLContext.getInstance("TLS");
-			sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
-			connection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
-
 			InputStream inputStream = connection.getInputStream();
 			String text = new BufferedReader(
 			  new InputStreamReader(inputStream, StandardCharsets.UTF_8))
@@ -418,7 +513,7 @@ public class SHRINEHubPollService {
 		}
 		return response;
 	}
-	
+*/	
 	public static String getCRCMessage(int queryID, int previousMessageID, String _clientSecret)
 	{
 		getConfiguration();
