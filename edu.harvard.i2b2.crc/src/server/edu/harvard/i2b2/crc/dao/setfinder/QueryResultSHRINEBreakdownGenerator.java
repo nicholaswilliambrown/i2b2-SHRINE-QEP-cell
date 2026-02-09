@@ -42,12 +42,13 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Iterator;
+import java.util.Date;
 
 import org.owasp.esapi.ESAPI;
 import org.owasp.esapi.Logger;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import java.util.Iterator;
 
 
 import org.apache.axiom.om.OMElement;
@@ -247,9 +248,12 @@ public class QueryResultSHRINEBreakdownGenerator extends CRCDAO implements IResu
 			
 			// Create the record for the PATIENT_COUNT_SHRINE_XML result instance. 
 			String riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, now(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'"; //Postgres 
-			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select " + queryInstanceId + ", Result_Type_ID, getdate(), STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'";
+			java.util.Date date2 = new Date(System.currentTimeMillis());
+			if (dataSourceLookup.getServerType().equalsIgnoreCase(DAOFactoryHelper.SQLSERVER)) riipcsxstmt2sql = "insert into QT_QUERY_RESULT_INSTANCE (Query_Instance_ID, RESULT_TYPE_ID, START_DATE, STATUS_TYPE_ID, DELETE_FLAG) select ?, Result_Type_ID, ?, STATUS_TYPE_ID, 'N' from QT_QUERY_RESULT_TYPE a join QT_QUERY_STATUS_TYPE b on a.Name = 'PATIENT_COUNT_SHRINE_XML' and b.Name = 'PROCESSING'";
 
 			PreparedStatement riipcsxstmt2 = sfConn.prepareStatement(riipcsxstmt2sql);
+			riipcsxstmt2.setInt(1, Integer.parseInt(queryInstanceId));
+			riipcsxstmt2.setObject(2, new java.util.Date(System.currentTimeMillis()));
 			riipcsxstmt2.setQueryTimeout(transactionTimeout);
 			riipcsxstmt2.executeUpdate();
 			riipcsxstmt2.close();
